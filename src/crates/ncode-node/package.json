@@ -1,0 +1,32 @@
+{
+  "name": "@ncode/node",
+  "version": "0.1.0",
+  "description": "Node.js bindings for the Ncode zero-copy columnar database engine",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "napi": {
+    "name": "index",
+    "triples": {
+      "defaults": true
+    }
+  },
+  "files": [
+    "dist",
+    "index.node"
+  ],
+  "scripts": {
+    "build": "napi build --platform --release && tsc -p tsconfig.json",
+    "build:debug": "napi build --platform && tsc -p tsconfig.json",
+    "test": "node --test dist/*.test.js"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0",
+    "@types/node": "^20.19.43",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

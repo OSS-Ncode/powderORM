@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ncode-core",
+    "crates/ncode-node",
+    "crates/ncode-python",
+]
+
+# The language-binding crates build C dynamic libraries and need their own
+# toolchains (napi-cli / maturin). Keep the core in the default build set and
+# let the bindings opt in explicitly so `cargo build` from the root stays fast.
+default-members = ["crates/ncode-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Ncode team"]
+repository = "https://github.com/ncode/ncode"
+
+[workspace.dependencies]
+ncode-core = { path = "crates/ncode-core" }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
