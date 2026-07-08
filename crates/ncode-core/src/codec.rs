@@ -55,6 +55,30 @@ fn bits_len(n: usize) -> usize {
     n.div_ceil(8)
 }
 
+/// Append a packed numeric slice as little-endian bytes. On little-endian
+/// targets (the overwhelmingly common case) this is a single `memcpy` — the
+/// property FORMAT.md's "encoding is a set of memcpys" design calls for.
+macro_rules! extend_le {
+    ($out:expr, $values:expr, $ty:ty) => {{
+        let values: &[$ty] = $values;
+        #[cfg(target_endian = "little")]
+        {
+            // Sound: casting a POD numeric slice to its byte representation.
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    values.as_ptr().cast::<u8>(),
+                    std::mem::size_of_val(values),
+                )
+            };
+            $out.extend_from_slice(bytes);
+        }
+        #[cfg(not(target_endian = "little"))]
+        for v in values {
+            $out.extend_from_slice(&v.to_le_bytes());
+        }
+    }};
+}
+
 /// Encode a [`RecordBatch`] into an NCB byte buffer.
 pub fn encode(batch: &RecordBatch) -> Vec<u8> {
     let ncols = batch.columns.len();
@@ -63,7 +87,23 @@ pub fn encode(batch: &RecordBatch) -> Vec<u8> {
     let dir_off = HEADER_LEN;
     let names_off = dir_off + ncols * COLDIR_LEN;
 
-    let mut out = vec![0u8; names_off];
+    // Reserve the whole output up front (a small over-estimate: +8 slack per
+    // aligned region) so a multi-megabyte result never re-allocates mid-encode.
+    let mut cap = names_off + 8;
+    for col in &batch.columns {
+        cap += col.field.name.len();
+        if let Some(bits) = &col.validity {
+            cap += bits.len() + 8;
+        }
+        cap += match &col.data {
+            ColumnData::Int64(v) => v.len() * 8 + 8,
+            ColumnData::Float64(v) => v.len() * 8 + 8,
+            ColumnData::Bool(v) => bits_len(v.len()) + 8,
+            ColumnData::Utf8 { offsets, data } => offsets.len() * 4 + data.len() + 16,
+        };
+    }
+    let mut out = Vec::with_capacity(cap);
+    out.resize(names_off, 0);
 
     // Names region.
     let mut name_spans = Vec::with_capacity(ncols);
@@ -106,17 +146,13 @@ pub fn encode(batch: &RecordBatch) -> Vec<u8> {
             ColumnData::Int64(values) => {
                 align8(&mut out);
                 let off = out.len() as u32;
-                for v in values {
-                    out.extend_from_slice(&v.to_le_bytes());
-                }
+                extend_le!(out, values, i64);
                 (off, (values.len() * 8) as u32, 0, 0)
             }
             ColumnData::Float64(values) => {
                 align8(&mut out);
                 let off = out.len() as u32;
-                for v in values {
-                    out.extend_from_slice(&v.to_le_bytes());
-                }
+                extend_le!(out, values, f64);
                 (off, (values.len() * 8) as u32, 0, 0)
             }
             ColumnData::Bool(values) => {
@@ -140,9 +176,7 @@ pub fn encode(batch: &RecordBatch) -> Vec<u8> {
             ColumnData::Utf8 { offsets, data } => {
                 align8(&mut out);
                 let off1 = out.len() as u32;
-                for o in offsets {
-                    out.extend_from_slice(&o.to_le_bytes());
-                }
+                extend_le!(out, offsets, u32);
                 let len1 = (offsets.len() * 4) as u32;
                 align8(&mut out);
                 let off2 = out.len() as u32;

@@ -138,9 +138,16 @@ export function decodeBatch(buf: Uint8Array): NcodeBatch {
         break;
       }
       case DataType.Utf8: {
-        const offsets = new Uint32Array(numRows + 1);
-        for (let i = 0; i <= numRows; i++) {
-          offsets[i] = view.getUint32(buf1Off + i * 4, true);
+        // The encoder 8-byte-aligns buf1, so the offsets buffer is normally a
+        // zero-copy Uint32Array view; copy only on the unaligned fallback.
+        let offsets: Uint32Array;
+        if (((base + buf1Off) & 3) === 0) {
+          offsets = new Uint32Array(ab, base + buf1Off, numRows + 1);
+        } else {
+          offsets = new Uint32Array(numRows + 1);
+          for (let i = 0; i <= numRows; i++) {
+            offsets[i] = view.getUint32(buf1Off + i * 4, true);
+          }
         }
         const data = new Uint8Array(ab, base + buf2Off, buf2Len);
         readRaw = (r) => decoder.decode(data.subarray(offsets[r], offsets[r + 1]));
