@@ -338,12 +338,6 @@ pub fn open_at(url: &str, cwd: &std::path::Path) -> Result<AnyConn, String> {
             .map_err(|e| format!("cannot open database `{url}`: {e}"))?;
         return Ok(AnyConn::Pg(client));
     }
-    if url.starts_with("oracle://") {
-        return Err(
-            "oracle:// runtime is not bundled (needs Oracle Instant Client);              use `powder ddl --dialect oracle` for schema DDL"
-                .into(),
-        );
-    }
     if url.starts_with("mysql://") || url.starts_with("mariadb://") {
         let url_fixed = url.replace("mariadb://", "mysql://");
         let opts = mysql::Opts::from_url(&url_fixed)

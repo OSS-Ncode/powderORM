@@ -64,9 +64,8 @@ pub fn by_name(name: &str) -> Result<Box<dyn SqlDialect>, String> {
         "sqlite" => Ok(Box::new(Sqlite)),
         "postgres" | "postgresql" | "pg" => Ok(Box::new(Postgres)),
         "mysql" | "mariadb" => Ok(Box::new(MySql)),
-        "oracle" => Ok(Box::new(Oracle)),
         other => Err(format!(
-            "unknown dialect `{other}` (expected sqlite, postgres, mysql, or oracle)"
+            "unknown dialect `{other}` (expected sqlite, postgres, or mysql)"
         )),
     }
 }
@@ -243,93 +242,6 @@ impl SqlDialect for MySql {
     }
 }
 
-/// Oracle: DDL generation. Notable differences from the other dialects:
-/// no `IF NOT EXISTS` (portable across versions — `powder migrate` only
-/// issues CREATE for tables it verified missing), `ADD (col type)` syntax
-/// for new columns, and length-typed VARCHAR2 for text.
-pub struct Oracle;
-
-impl SqlDialect for Oracle {
-    fn type_sql(&self, ct: ColumnType) -> &'static str {
-        match ct {
-            ColumnType::Int => "NUMBER(19)",
-            ColumnType::Float => "BINARY_DOUBLE",
-            ColumnType::Text => "VARCHAR2(4000)",
-            ColumnType::Bool => "NUMBER(1)",
-        }
-    }
-
-    fn create_table(&self, table: &Table) -> String {
-        let pk_cols: Vec<&Column> = table.columns.iter().filter(|c| c.def.primary_key).collect();
-        let inline_pk = pk_cols.len() == 1;
-
-        let mut parts: Vec<String> = table
-            .columns
-            .iter()
-            .map(|c| {
-                let mut s = format!("{} {}", c.name, self.type_sql(c.def.column_type));
-                if inline_pk && c.def.primary_key {
-                    s.push_str(" PRIMARY KEY");
-                } else if !c.def.nullable {
-                    s.push_str(" NOT NULL");
-                }
-                s
-            })
-            .collect();
-
-        if pk_cols.len() > 1 {
-            parts.push(format!(
-                "PRIMARY KEY ({})",
-                pk_cols.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")
-            ));
-        }
-        for fk in &table.foreign_keys {
-            parts.push(format!(
-                "FOREIGN KEY ({}) REFERENCES {}({})",
-                fk.columns.join(", "),
-                fk.ref_table,
-                fk.ref_columns.join(", ")
-            ));
-        }
-
-        // No IF NOT EXISTS: only Oracle 23ai+ accepts it, and the migrate
-        // runner already guards CREATE behind an existence check.
-        format!("CREATE TABLE {} ({})", table.name, parts.join(", "))
-    }
-
-    fn add_column(&self, table: &Table, col: &Column) -> Result<String, String> {
-        if col.def.primary_key {
-            return Err(format!(
-                "table `{}`: cannot add primary key column `{}` to an existing table",
-                table.name, col.name
-            ));
-        }
-        let mut ddl = format!(
-            "ALTER TABLE {} ADD ({} {}",
-            table.name,
-            col.name,
-            self.type_sql(col.def.column_type)
-        );
-        if !col.def.nullable {
-            ddl.push_str(match col.def.column_type {
-                ColumnType::Text => " DEFAULT ' ' NOT NULL",
-                _ => " DEFAULT 0 NOT NULL",
-            });
-        }
-        ddl.push(')');
-        if col.def.references.is_some() {
-            // Column-level REFERENCES inside ADD (…) is version-sensitive;
-            // keep the surface predictable and ask for a rebuild-style change.
-            return Err(format!(
-                "table `{}`: adding a foreign-key column in place is not supported on Oracle; \
-                 add the column first, then a separate ALTER TABLE ... ADD CONSTRAINT",
-                table.name
-            ));
-        }
-        Ok(ddl)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,47 +334,8 @@ mod tests {
         assert!(by_name("pg").is_ok());
         assert!(by_name("mysql").is_ok());
         assert!(by_name("mariadb").is_ok());
-        assert!(by_name("oracle").is_ok());
+        assert!(by_name("oracle").is_err());
         assert!(by_name("mssql").is_err());
-    }
-
-    #[test]
-    fn oracle_maps_types_without_if_not_exists() {
-        let schema = Schema::parse(
-            r#"{"tables":{
-                "users":{"columns":{
-                    "id":{"type":"int","primaryKey":true},
-                    "name":{"type":"text"},
-                    "score":{"type":"float","nullable":true},
-                    "active":{"type":"bool"}
-                }}
-            }}"#,
-        )
-        .unwrap();
-        let ddl = Oracle.create_table(&schema.tables[0]);
-        assert_eq!(
-            ddl,
-            "CREATE TABLE users (id NUMBER(19) PRIMARY KEY, name VARCHAR2(4000) NOT NULL, \
-             score BINARY_DOUBLE, active NUMBER(1) NOT NULL)"
-        );
-        assert!(!ddl.contains("IF NOT EXISTS"));
-    }
-
-    #[test]
-    fn oracle_add_column_uses_paren_syntax() {
-        let schema = Schema::parse(
-            r#"{"tables":{"t":{"columns":{
-                "id":{"type":"int","primaryKey":true},
-                "bio":{"type":"text","nullable":true}
-            }}}}"#,
-        )
-        .unwrap();
-        let t = &schema.tables[0];
-        let bio = t.columns.iter().find(|c| c.name == "bio").unwrap();
-        assert_eq!(
-            Oracle.add_column(t, bio).unwrap(),
-            "ALTER TABLE t ADD (bio VARCHAR2(4000))"
-        );
     }
 
     #[test]

@@ -154,7 +154,7 @@ const LANGS = [
   'C++',
   'C#',
 ];
-const DBS = ['SQLite', 'PostgreSQL', 'MySQL / MariaDB', 'Oracle'];
+const DBS = ['SQLite', 'PostgreSQL', 'MySQL / MariaDB'];
 
 export default async function HomePage({ params }: { params: Promise<{ lang: string }> }) {
   const { lang } = await params;

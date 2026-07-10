@@ -15,7 +15,7 @@ USAGE:
   powder new <dir>                              # scaffold a new Powder project
   powder init
   powder generate [--schema powder.schema.json] [--ts <out.ts>] [--py <out.py>] [--ts-import <module>]
-  powder ddl      [--schema powder.schema.json] [--dialect sqlite|postgres|mysql|oracle]
+  powder ddl      [--schema powder.schema.json] [--dialect sqlite|postgres|mysql]
   powder migrate  --db <url> [--schema powder.schema.json] [--rebuild]
   powder validate --db <url> [--schema powder.schema.json]
   powder seed     --db <url> --file <seed.json|seed.sql>

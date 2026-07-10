@@ -187,17 +187,6 @@ impl Client {
                 "postgres:// URLs need powder-core built with the `postgres` feature".into(),
             ));
         }
-        if url.starts_with("oracle://") {
-            // Honest failure over silent misroute: an Oracle runtime needs
-            // ODPI-C plus Oracle Instant Client on the machine, which the
-            // engine does not bundle. DDL generation works today
-            // (`powder ddl --dialect oracle`).
-            return Err(Error::Unsupported(
-                "oracle:// runtime is not bundled (needs Oracle Instant Client); \
-                 use `powder ddl --dialect oracle` for schema DDL"
-                    .into(),
-            ));
-        }
         if url.starts_with("mysql://") || url.starts_with("mariadb://") {
             #[cfg(feature = "mysql")]
             {
