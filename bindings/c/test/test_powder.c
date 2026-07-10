@@ -49,6 +49,48 @@ int main(void) {
     size_t need = powder_last_error_copy(small, sizeof small);
     CHECK(need > sizeof small, "last_error_copy reports full length");
 
+    /* ORM: schema handle + JSON ops through the shared engine */
+    /* (>= 0: sqlite3_changes after DDL reports the previous statement's count) */
+    CHECK(powder_execute(db,
+                         "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, "
+                         "score REAL, active INTEGER)",
+                         NULL) >= 0,
+          "create users table");
+    PowderOrmSchema *schema = powder_orm_schema_new(
+        "{\"tables\":{\"users\":{\"columns\":{"
+        "\"id\":{\"type\":\"int\",\"primaryKey\":true},"
+        "\"name\":{\"type\":\"text\"},"
+        "\"score\":{\"type\":\"float\",\"nullable\":true},"
+        "\"active\":{\"type\":\"bool\"}}}}}");
+    CHECK(schema != NULL, "orm schema parses");
+
+    CHECK(powder_orm_execute(db, schema,
+                             "{\"op\":\"createMany\",\"table\":\"users\",\"rows\":["
+                             "{\"id\":1,\"name\":\"alice\",\"score\":9.5,\"active\":true},"
+                             "{\"id\":2,\"name\":\"bob\",\"score\":3.0,\"active\":false}]}") == 2,
+          "orm createMany");
+    CHECK(powder_orm_execute(db, schema,
+                             "{\"op\":\"count\",\"table\":\"users\","
+                             "\"where\":{\"score\":{\"gte\":5}}}") == 1,
+          "orm count with where");
+
+    size_t jlen = 0;
+    unsigned char *json = powder_orm_find_json(
+        db, schema,
+        "{\"op\":\"findMany\",\"table\":\"users\","
+        "\"where\":{\"active\":true},\"orderBy\":{\"id\":\"asc\"}}",
+        &jlen);
+    CHECK(json != NULL && jlen > 2, "orm findMany returns JSON");
+    CHECK(memchr(json, 'a', jlen) != NULL && jlen > 10, "orm JSON has content");
+    powder_free_buffer(json, jlen);
+
+    CHECK(powder_orm_execute(db, schema,
+                             "{\"op\":\"delete\",\"table\":\"users\",\"where\":{}}") == -1,
+          "orm delete with empty where fails");
+    err = powder_last_error();
+    CHECK(err != NULL && strstr(err, "deleteAll") != NULL, "error suggests deleteAll");
+
+    powder_orm_schema_free(schema);
     powder_close(db);
     printf("c binding OK (%d checks)\n", checks);
     return 0;

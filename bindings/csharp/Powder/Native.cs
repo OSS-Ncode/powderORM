@@ -62,6 +62,25 @@ internal static partial class Native
     [DllImport(Lib, EntryPoint = "powder_close")]
     internal static extern void Close(IntPtr client);
 
+    [DllImport(Lib, EntryPoint = "powder_orm_schema_new")]
+    internal static extern IntPtr OrmSchemaNew([MarshalAs(UnmanagedType.LPUTF8Str)] string schemaJson);
+
+    [DllImport(Lib, EntryPoint = "powder_orm_schema_free")]
+    internal static extern void OrmSchemaFree(IntPtr schema);
+
+    [DllImport(Lib, EntryPoint = "powder_orm_execute")]
+    internal static extern long OrmExecute(
+        IntPtr client,
+        IntPtr schema,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string opJson);
+
+    [DllImport(Lib, EntryPoint = "powder_orm_find_json")]
+    internal static extern IntPtr OrmFindJson(
+        IntPtr client,
+        IntPtr schema,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string opJson,
+        out nuint outLen);
+
     internal static string LastErrorString()
     {
         var p = LastError();

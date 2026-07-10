@@ -35,6 +35,7 @@ pub mod codec;
 pub mod error;
 #[cfg(feature = "mysql")]
 pub mod my;
+pub mod orm;
 #[cfg(feature = "postgres")]
 pub mod pg;
 pub mod query;

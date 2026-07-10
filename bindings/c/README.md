@@ -29,3 +29,28 @@ Unix: `cc test/test_powder.c -Iinclude -lpowder_ffi -L<target>/release`.
 - 오류는 NULL/-1 + `powder_last_error()`(스레드 로컬, borrowed) 또는
   `powder_last_error_copy()`.
 - `powder_query` 버퍼는 반환된 길이 그대로 `powder_free_buffer`로 해제.
+
+## ORM
+
+스키마 핸들 하나 + JSON op 하나 — 모든 언어가 공유하는 스펙 그대로:
+
+```c
+PowderOrmSchema *schema = powder_orm_schema_new(schema_json);
+
+powder_orm_execute(db, schema,
+    "{\"op\":\"create\",\"table\":\"users\","
+    "\"data\":{\"id\":1,\"name\":\"alice\",\"score\":9.5,\"active\":true}}");
+
+size_t len = 0;
+unsigned char *rows = powder_orm_find_json(db, schema,
+    "{\"op\":\"findMany\",\"table\":\"users\","
+    "\"where\":{\"active\":true,\"score\":{\"gte\":5}},"
+    "\"orderBy\":{\"score\":\"desc\"},\"limit\":10}", &len);
+/* rows = UTF-8 JSON 배열 (len 바이트, NUL 없음) */
+powder_free_buffer(rows, len);
+powder_orm_schema_free(schema);
+```
+
+row-returning op(`findMany`/`findFirst`/`groupBy`/`aggregate`)는
+`powder_orm_find_json`, 변경/카운트(`create`/`createMany`/`update`/`delete`/
+`deleteAll`/`count`)는 `powder_orm_execute`(영향 행 수 반환, 실패 -1).

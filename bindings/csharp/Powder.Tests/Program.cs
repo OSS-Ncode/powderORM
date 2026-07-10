@@ -86,6 +86,80 @@ using (var db = Client.Connect("sqlite::memory:"))
     Check(threw, "unknown column throws");
 }
 
+// ORM: unified op semantics through the shared engine.
+using (var db = Client.Connect("sqlite::memory:"))
+{
+    db.Execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL, active INTEGER)");
+    db.Execute("CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT)");
+    const string schema = """
+    {
+      "tables": {
+        "users": { "columns": {
+          "id":     { "type": "int", "primaryKey": true },
+          "name":   { "type": "text" },
+          "score":  { "type": "float", "nullable": true },
+          "active": { "type": "bool" }
+        }},
+        "posts": { "columns": {
+          "id":      { "type": "int", "primaryKey": true },
+          "user_id": { "type": "int", "references": { "table": "users", "column": "id" } },
+          "title":   { "type": "text" }
+        }}
+      }
+    }
+    """;
+    using var orm = db.Orm(schema);
+    var users = orm.Table("users");
+    var posts = orm.Table("posts");
+
+    Check(users.Create(new { id = 1, name = "alice", score = 9.5, active = true }) == 1, "orm Create");
+    Check(users.CreateMany(new object[]
+    {
+        new { id = 2, name = "bob", score = 3.0, active = false },
+        new Dictionary<string, object?> { ["id"] = 3, ["name"] = "carol", ["score"] = null, ["active"] = true },
+    }) == 2, "orm CreateMany");
+    posts.CreateMany(new object[]
+    {
+        new { id = 10, user_id = 1, title = "hi" },
+        new { id = 11, user_id = 1, title = "again" },
+    });
+
+    var found = users.FindMany(new
+    {
+        where = new { OR = new object[] { new { score = new { gt = 5 } }, new { score = (object?)null } } },
+        orderBy = new { id = "asc" },
+    });
+    Check(found.Count == 2 && (string?)found[0]!["name"] == "alice" && (string?)found[1]!["name"] == "carol",
+          "orm nested where");
+    Check((bool?)found[0]!["active"] == true, "orm bool coercion");
+
+    Check(users.Update(new { id = 2 }, new { score = 10 }) == 1, "orm Update");
+    Check(users.Count(new { score = new { gte = 7 } }) == 2, "orm Count");
+    Check(users.Exists(new { name = new { like = "%li%" } }), "orm Exists");
+    Check(users.Aggregate("max", "score") == 10, "orm Aggregate");
+    Check(users.Aggregate("sum", "score", new { id = new { gt = 99 } }) == null, "orm Aggregate empty");
+
+    var inc = posts.FindMany(new { include = new { user = true }, orderBy = new { id = "asc" } });
+    Check((string?)inc[0]!["user"]!["name"] == "alice", "orm include");
+    var joined = posts.FindMany(new { join = new { user = true }, where = new { id = 10 } });
+    Check((string?)joined[0]!["user"]!["name"] == "alice", "orm join");
+
+    var grouped = posts.GroupBy(new
+    {
+        by = new[] { "user_id" },
+        count = true,
+        having = new { _count = new { gte = 2 } },
+    });
+    Check(grouped.Count == 1 && (long?)grouped[0]!["_count"] == 2, "orm GroupBy + having");
+
+    bool ormThrew = false;
+    try { users.Delete(new { }); }
+    catch (PowderException) { ormThrew = true; }
+    Check(ormThrew, "orm Delete with empty where throws");
+    Check(users.Delete(new { id = 3 }) == 1, "orm Delete");
+    Check(users.DeleteAll() == 2, "orm DeleteAll");
+}
+
 // Disposed client rejects use.
 var closed = Client.Connect("sqlite::memory:");
 closed.Dispose();

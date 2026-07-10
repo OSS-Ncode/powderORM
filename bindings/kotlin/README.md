@@ -55,3 +55,27 @@ kotlinc -cp ../../crates/powder-java/out src/dev/powder/Powder.kt test/KotlinTes
 java -cp "out;../../crates/powder-java/out;<kotlin-stdlib.jar>" KotlinTestKt <powder_java.dll>
 # -> kotlin binding OK (22 checks)
 ```
+
+## 스키마 인식 ORM (공유 Rust 엔진)
+
+`from(...)` DSL과 별개로, `powder.schema.json` 텍스트로 만든 모델 레이어가
+다른 모든 Powder ORM과 동일한 연산·문법을 제공한다:
+
+```kotlin
+db.orm(schemaJson).use { orm ->
+    val users = orm.table("users")
+    users.create(mapOf("id" to 1, "name" to "alice", "score" to 9.5, "active" to true))
+    val top = users.findMany(
+        where = mapOf("active" to true, "score" to mapOf("gte" to 5)),
+        orderBy = mapOf("score" to "desc"),
+        limit = 10,
+    )
+    orm.table("posts").findMany(include = mapOf("user" to true))
+    users.update(mapOf("id" to 1), mapOf("score" to 10))
+    users.groupBy(by = listOf("active"), count = true,
+                  having = mapOf("_count" to mapOf("gte" to 2)))
+}
+```
+
+`where`는 `eq ne gt gte lt lte like in` + `AND/OR/NOT` 중첩,
+`include`(배치 관계 로드)/`join`(belongsTo LEFT JOIN)을 지원한다.

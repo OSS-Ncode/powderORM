@@ -30,3 +30,23 @@ db.transaction([](powder::Client& tx) {
 cargo build -p powder-ffi --release
 cl /std:c++17 /EHsc /W3 /utf-8 test\test_powder.cpp /link <target>\release\powder_ffi.dll.lib
 ```
+
+## ORM
+
+`powder.schema.json` 텍스트로 만든 `powder::Orm` — 다른 모든 Powder ORM과
+동일한 연산·문법(공유 Rust 엔진). 옵션은 JSON 객체 문자열, 행은 JSON 문자열:
+
+```cpp
+powder::Orm orm(db, schema_json);
+auto users = orm.table("users");
+users.create(R"({"id":1,"name":"alice","score":9.5,"active":true})");
+std::string rows = users.find_many(
+    R"({"where":{"active":true,"score":{"gte":5}},
+        "orderBy":{"score":"desc"},"limit":10})");
+users.update(R"({"id":1})", R"({"score":10})");
+users.count(R"({"active":true})");
+users.group_by(R"({"by":["active"],"count":true,"having":{"_count":{"gte":2}}})");
+```
+
+`where`는 `eq ne gt gte lt lte like in` + `AND/OR/NOT` 중첩, `include`/`join`
+관계 로드를 지원한다. delete는 C++ 예약어라 `remove`/`remove_all`로 노출된다.

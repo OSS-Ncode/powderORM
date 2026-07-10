@@ -18,6 +18,10 @@ mysql = ["dep:mysql"]
 thiserror.workspace = true
 tokio.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
+# ORM op/schema JSON. `preserve_order` keeps object key order, so where /
+# orderBy fragments render in the caller's declaration order — the same
+# semantics as the TS and Python ORMs (JS objects / Python dicts are ordered).
+serde_json = { version = "1", features = ["preserve_order"] }
 # Persistent worker pool for the parallel table scan — avoids per-query
 # thread spawn/teardown.
 rayon = "1"

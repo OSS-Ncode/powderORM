@@ -36,3 +36,28 @@ POWDER_LIB=<target>/release/powder_ffi.dll dotnet run
 - `Column.Get(row)`은 박싱된 값 또는 SQL NULL이면 `null`;
   `GetInt64/GetDouble/GetBoolean/GetString`은 무박싱 경로.
 - 오류는 전부 `PowderException`(엔진 메시지 포함).
+
+## ORM
+
+`powder.schema.json` 텍스트로 만든 모델 레이어 — 다른 모든 Powder ORM과
+동일한 연산·문법(공유 Rust 엔진). 옵션은 익명 객체(또는 딕셔너리),
+행은 `System.Text.Json.Nodes`:
+
+```csharp
+using var orm = db.Orm(schemaJson);
+var users = orm.Table("users");
+users.Create(new { id = 1, name = "alice", score = 9.5, active = true });
+var rows = users.FindMany(new
+{
+    where = new { active = true, score = new { gte = 5 } },
+    orderBy = new { score = "desc" },
+    limit = 10,
+});
+var posts = orm.Table("posts").FindMany(new { include = new { user = true } });
+users.Update(new { id = 1 }, new { score = 10 });
+users.GroupBy(new { by = new[] { "active" }, count = true,
+                    having = new { _count = new { gte = 2 } } });
+```
+
+`where`는 `eq ne gt gte lt lte like in` + `AND/OR/NOT` 중첩,
+`include`(배치 관계 로드)/`join`(belongsTo LEFT JOIN)을 지원한다.

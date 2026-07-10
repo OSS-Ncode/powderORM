@@ -253,3 +253,111 @@ pub extern "system" fn Java_com_powder_PowderNative_close(
         unsafe { drop(Box::from_raw(handle as *mut Client)) };
     }
 }
+
+// ---------------------------------------------------------------------------
+// ORM: the shared engine (powder_core::orm) over JNI.
+//
+// A schema handle is parsed once from `powder.schema.json` text; each op then
+// crosses as one JSON string — the same operation spec in every language.
+// ---------------------------------------------------------------------------
+
+use powder_core::orm::{Orm, OrmSchema};
+
+/// Reconstruct the boxed schema from a handle without taking ownership.
+///
+/// # Safety
+/// `handle` must be live from `ormSchemaNew` and not yet `ormSchemaFree`d.
+unsafe fn orm_schema<'a>(handle: jlong) -> &'a OrmSchema {
+    &*(handle as *const OrmSchema)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_powder_PowderNative_ormSchemaNew<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    schema_json: JString<'l>,
+) -> jlong {
+    let json = jstr(&mut env, &schema_json);
+    match OrmSchema::parse(&json) {
+        Ok(s) => Box::into_raw(Box::new(s)) as jlong,
+        Err(e) => {
+            throw(&mut env, e.to_string());
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_powder_PowderNative_ormSchemaFree(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    if handle != 0 {
+        unsafe { drop(Box::from_raw(handle as *mut OrmSchema)) };
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_powder_PowderNative_ormExecute<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    handle: jlong,
+    schema: jlong,
+    op_json: JString<'l>,
+) -> jlong {
+    let op = jstr(&mut env, &op_json);
+    let op: serde_json::Value = match serde_json::from_str(&op) {
+        Ok(v) => v,
+        Err(e) => {
+            throw(&mut env, format!("op is not valid JSON: {e}"));
+            return 0;
+        }
+    };
+    let orm = Orm::new(
+        unsafe { client(handle) }.clone(),
+        unsafe { orm_schema(schema) }.clone(),
+    );
+    match rt().block_on(orm.execute(&op)) {
+        Ok(n) => n,
+        Err(e) => {
+            throw(&mut env, e.to_string());
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_powder_PowderNative_ormFindJson<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    handle: jlong,
+    schema: jlong,
+    op_json: JString<'l>,
+) -> jni::sys::jstring {
+    let op = jstr(&mut env, &op_json);
+    let op: serde_json::Value = match serde_json::from_str(&op) {
+        Ok(v) => v,
+        Err(e) => {
+            throw(&mut env, format!("op is not valid JSON: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let orm = Orm::new(
+        unsafe { client(handle) }.clone(),
+        unsafe { orm_schema(schema) }.clone(),
+    );
+    match rt().block_on(orm.find_json(&op)) {
+        Ok(rows) => match env.new_string(rows.to_string()) {
+            Ok(s) => s.into_raw(),
+            Err(e) => {
+                throw(&mut env, e.to_string());
+                std::ptr::null_mut()
+            }
+        },
+        Err(e) => {
+            throw(&mut env, e.to_string());
+            std::ptr::null_mut()
+        }
+    }
+}

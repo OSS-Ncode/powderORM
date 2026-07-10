@@ -15,6 +15,10 @@ typedef unsigned char* (*powder_query_fn)(void*, const char*, const char*, size_
 typedef void (*powder_free_buffer_fn)(unsigned char*, size_t);
 typedef void (*powder_close_fn)(void*);
 typedef const char* (*powder_last_error_fn)(void);
+typedef void* (*powder_orm_schema_new_fn)(const char*);
+typedef void (*powder_orm_schema_free_fn)(void*);
+typedef long long (*powder_orm_execute_fn)(void*, const void*, const char*);
+typedef unsigned char* (*powder_orm_find_json_fn)(void*, const void*, const char*, size_t*);
 
 static powder_connect_fn     p_connect;
 static powder_execute_fn     p_execute;
@@ -22,6 +26,10 @@ static powder_query_fn       p_query;
 static powder_free_buffer_fn p_free_buffer;
 static powder_close_fn       p_close;
 static powder_last_error_fn  p_last_error;
+static powder_orm_schema_new_fn  p_orm_schema_new;
+static powder_orm_schema_free_fn p_orm_schema_free;
+static powder_orm_execute_fn     p_orm_execute;
+static powder_orm_find_json_fn   p_orm_find_json;
 
 // Returns NULL on success, else the dlerror() message.
 static const char* powder_go_load(const char* path) {
@@ -33,7 +41,12 @@ static const char* powder_go_load(const char* path) {
     p_free_buffer = (powder_free_buffer_fn) dlsym(h, "powder_free_buffer");
     p_close       = (powder_close_fn)       dlsym(h, "powder_close");
     p_last_error  = (powder_last_error_fn)  dlsym(h, "powder_last_error");
-    if (!p_connect || !p_execute || !p_query || !p_free_buffer || !p_close || !p_last_error) {
+    p_orm_schema_new  = (powder_orm_schema_new_fn)  dlsym(h, "powder_orm_schema_new");
+    p_orm_schema_free = (powder_orm_schema_free_fn) dlsym(h, "powder_orm_schema_free");
+    p_orm_execute     = (powder_orm_execute_fn)     dlsym(h, "powder_orm_execute");
+    p_orm_find_json   = (powder_orm_find_json_fn)   dlsym(h, "powder_orm_find_json");
+    if (!p_connect || !p_execute || !p_query || !p_free_buffer || !p_close || !p_last_error
+        || !p_orm_schema_new || !p_orm_schema_free || !p_orm_execute || !p_orm_find_json) {
         return "powder_ffi symbols missing from shared library";
     }
     return NULL;
@@ -45,6 +58,10 @@ static unsigned char* powder_go_query(void* h, const char* sql, const char* para
 static void        powder_go_free_buffer(unsigned char* p, size_t n) { p_free_buffer(p, n); }
 static void        powder_go_close(void* h) { p_close(h); }
 static const char* powder_go_last_error(void) { return p_last_error(); }
+static void*       powder_go_orm_schema_new(const char* json) { return p_orm_schema_new(json); }
+static void        powder_go_orm_schema_free(void* s) { p_orm_schema_free(s); }
+static long long   powder_go_orm_execute(void* h, const void* s, const char* op) { return p_orm_execute(h, s, op); }
+static unsigned char* powder_go_orm_find_json(void* h, const void* s, const char* op, size_t* out_len) { return p_orm_find_json(h, s, op, out_len); }
 */
 import "C"
 
@@ -150,4 +167,50 @@ func nativeQuery(handle uintptr, sql, paramsJSON string) ([]byte, error) {
 
 func nativeClose(handle uintptr) {
 	C.powder_go_close(unsafe.Pointer(handle))
+}
+
+func nativeOrmSchemaNew(schemaJSON string) (uintptr, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	cjson := C.CString(schemaJSON)
+	defer C.free(unsafe.Pointer(cjson))
+	h := C.powder_go_orm_schema_new(cjson)
+	if h == nil {
+		return 0, lastError("schema parse failed")
+	}
+	return uintptr(h), nil
+}
+
+func nativeOrmSchemaFree(schema uintptr) {
+	C.powder_go_orm_schema_free(unsafe.Pointer(schema))
+}
+
+func nativeOrmExecute(handle, schema uintptr, opJSON string) (int64, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	cop := C.CString(opJSON)
+	defer C.free(unsafe.Pointer(cop))
+	n := int64(C.powder_go_orm_execute(unsafe.Pointer(handle), unsafe.Pointer(schema), cop))
+	if n < 0 {
+		return 0, lastError("orm execute failed")
+	}
+	return n, nil
+}
+
+func nativeOrmFindJSON(handle, schema uintptr, opJSON string) (string, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	cop := C.CString(opJSON)
+	defer C.free(unsafe.Pointer(cop))
+	var outLen C.size_t
+	ptr := C.powder_go_orm_find_json(unsafe.Pointer(handle), unsafe.Pointer(schema), cop, &outLen)
+	if ptr == nil {
+		return "", lastError("orm find failed")
+	}
+	out := C.GoBytes(unsafe.Pointer(ptr), C.int(outLen))
+	C.powder_go_free_buffer(ptr, outLen)
+	return string(out), nil
 }

@@ -323,6 +323,13 @@ class Database private constructor(private val client: Client) : AutoCloseable {
     fun from(table: String): TableRef = TableRef(client, ident(table))
 
     /**
+     * Build the schema-aware model layer from `powder.schema.json` text — the
+     * same operation semantics as every other Powder ORM (unified `where` /
+     * `orderBy` / `include` / `join` spec), executed by the shared Rust engine.
+     */
+    fun orm(schemaJson: String): Orm = Orm(client.orm(schemaJson))
+
+    /**
      * Run [body] in a transaction: COMMIT on return, ROLLBACK on throw.
      * Nested calls use savepoints (the Java binding's semantics).
      */
@@ -334,4 +341,137 @@ class Database private constructor(private val client: Client) : AutoCloseable {
     }
 
     override fun close() = client.close()
+}
+
+// ---------------------------------------------------------------------------
+// Schema-aware ORM — Kotlin surface over the shared Rust engine.
+// ---------------------------------------------------------------------------
+
+/**
+ * The model layer over a [Database]: unified Powder ORM semantics with
+ * Kotlin ergonomics. Obtain via [Database.orm]; close (or `use { }`) to free
+ * the parsed schema.
+ *
+ *   db.orm(schemaJson).use { orm ->
+ *       val users = orm.table("users")
+ *       users.create(mapOf("id" to 1, "name" to "alice", "score" to 9.5, "active" to true))
+ *       val top = users.findMany(
+ *           where = mapOf("active" to true, "score" to mapOf("gte" to 5)),
+ *           orderBy = mapOf("score" to "desc"),
+ *           limit = 10,
+ *       )
+ *   }
+ */
+class Orm internal constructor(private val native: com.powder.Orm) : AutoCloseable {
+    /** Handle for one table's CRUD surface. */
+    fun table(name: String): OrmTable = OrmTable(native.table(ident(name)))
+
+    override fun close() = native.close()
+}
+
+/** One table's unified CRUD surface. Where objects use the shared spec:
+ *  bare values are equality, operator maps (`eq`/`ne`/`gt`/`gte`/`lt`/`lte`/
+ *  `like`/`in`), `null` is `IS NULL`, and `AND`/`OR`/`NOT` nest freely. */
+class OrmTable internal constructor(private val table: com.powder.Orm.Table) {
+    private fun opts(
+        where: Map<String, Any?>? = null,
+        orderBy: Map<String, String>? = null,
+        limit: Long? = null,
+        offset: Long? = null,
+        include: Map<String, Any?>? = null,
+        join: Map<String, Boolean>? = null,
+    ): Map<String, Any?> {
+        val m = LinkedHashMap<String, Any?>()
+        if (where != null) m["where"] = where
+        if (orderBy != null) m["orderBy"] = orderBy
+        if (limit != null) m["limit"] = limit
+        if (offset != null) m["offset"] = offset
+        if (include != null) m["include"] = include
+        if (join != null) m["join"] = join
+        return m
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun rows(v: List<Map<String, Any>>?): List<Map<String, Any?>> =
+        (v ?: emptyList()) as List<Map<String, Any?>>
+
+    /** SELECT rows; `include` batch-loads relations, `join` hydrates
+     *  belongsTo relations in a single LEFT JOIN query. */
+    fun findMany(
+        where: Map<String, Any?>? = null,
+        orderBy: Map<String, String>? = null,
+        limit: Long? = null,
+        offset: Long? = null,
+        include: Map<String, Any?>? = null,
+        join: Map<String, Boolean>? = null,
+    ): List<Map<String, Any?>> =
+        rows(table.findMany(opts(where, orderBy, limit, offset, include, join)))
+
+    /** First matching row, or null. */
+    fun findFirst(
+        where: Map<String, Any?>? = null,
+        orderBy: Map<String, String>? = null,
+        include: Map<String, Any?>? = null,
+        join: Map<String, Boolean>? = null,
+    ): Map<String, Any?>? =
+        table.findFirst(opts(where, orderBy, include = include, join = join))
+
+    /** Every row. */
+    fun all(): List<Map<String, Any?>> = rows(table.all())
+
+    /** INSERT one row; missing (nullable) columns are omitted. */
+    fun create(data: Map<String, Any?>): Long = table.create(data)
+
+    /** Bulk INSERT (chunked multi-row VALUES); every row must carry the same
+     *  columns as the first. */
+    fun createMany(rows: List<Map<String, Any?>>): Long = table.createMany(rows)
+
+    /** UPDATE matching rows; returns the affected count. */
+    fun update(where: Map<String, Any?>, data: Map<String, Any?>): Long =
+        table.update(where, data)
+
+    /** DELETE matching rows. An empty where is rejected — use [deleteAll]. */
+    fun delete(where: Map<String, Any?>): Long = table.delete(where)
+
+    /** DELETE every row (explicit opt-in). */
+    fun deleteAll(): Long = table.deleteAll()
+
+    /** COUNT rows matching where (null counts everything). */
+    fun count(where: Map<String, Any?>? = null): Long = table.count(where)
+
+    /** Whether at least one row matches. */
+    fun exists(where: Map<String, Any?>? = null): Boolean = table.exists(where)
+
+    /** SUM/AVG/MIN/MAX over one column; null when no rows match. */
+    fun aggregate(fn: String, column: String, where: Map<String, Any?>? = null): Double? =
+        table.aggregate(fn, column, where)
+
+    /** GROUP BY with aggregates; aliases `_count`, `_sum_<col>`, .... */
+    fun groupBy(
+        by: List<String>,
+        where: Map<String, Any?>? = null,
+        count: Boolean = false,
+        sum: List<String>? = null,
+        avg: List<String>? = null,
+        min: List<String>? = null,
+        max: List<String>? = null,
+        having: Map<String, Map<String, Number>>? = null,
+        orderBy: Map<String, String>? = null,
+        limit: Long? = null,
+        offset: Long? = null,
+    ): List<Map<String, Any?>> {
+        val m = LinkedHashMap<String, Any?>()
+        m["by"] = by
+        if (where != null) m["where"] = where
+        if (count) m["count"] = true
+        if (sum != null) m["sum"] = sum
+        if (avg != null) m["avg"] = avg
+        if (min != null) m["min"] = min
+        if (max != null) m["max"] = max
+        if (having != null) m["having"] = having
+        if (orderBy != null) m["orderBy"] = orderBy
+        if (limit != null) m["limit"] = limit
+        if (offset != null) m["offset"] = offset
+        return rows(table.groupBy(m))
+    }
 }

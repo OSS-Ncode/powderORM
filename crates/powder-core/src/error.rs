@@ -31,6 +31,11 @@ pub enum Error {
     /// A background (spawn_blocking) task failed to join.
     #[error("background task failed: {0}")]
     Join(String),
+
+    /// An ORM operation was malformed (unknown table/column/relation,
+    /// invalid op JSON, missing where clause, ...).
+    #[error("orm error: {0}")]
+    Orm(String),
 }
 
 /// Convenience alias used throughout the crate.

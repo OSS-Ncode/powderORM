@@ -62,3 +62,28 @@ try (Batch b = db.queryDirect("SELECT * FROM users")) {
 ```
 
 두 경로 모두 같은 `PcbReader`로 디코드하며 동일한 행을 만든다; 숫자 접근은 어느 쪽이든 리틀 엔디언 버퍼에서 바로 읽는다.
+
+## ORM
+
+`powder.schema.json` 텍스트로 만든 모델 레이어 — 다른 모든 Powder ORM과
+동일한 연산·문법(공유 Rust 엔진). 옵션은 `Map`, 행은
+`List<Map<String, Object>>`:
+
+```java
+try (Orm orm = db.orm(schemaJson)) {
+    Orm.Table users = orm.table("users");
+    users.create(Map.of("id", 1, "name", "alice", "score", 9.5, "active", true));
+    List<Map<String, Object>> rows = users.findMany(Map.of(
+        "where", Map.of("active", true, "score", Map.of("gte", 5)),
+        "orderBy", Map.of("score", "desc"),
+        "limit", 10));
+    orm.table("posts").findMany(Map.of("include", Map.of("user", true)));
+    users.update(Map.of("id", 1), Map.of("score", 10));
+    users.groupBy(Map.of("by", List.of("active"), "count", true,
+                         "having", Map.of("_count", Map.of("gte", 2))));
+}
+```
+
+`where`는 `eq ne gt gte lt lte like in` + `AND/OR/NOT` 중첩,
+`include`(배치 관계 로드)/`join`(belongsTo LEFT JOIN)을 지원한다.
+다중 컬럼 `orderBy`는 `Map.of` 대신 `LinkedHashMap`으로(순서 보존).

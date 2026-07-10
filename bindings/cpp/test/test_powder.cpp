@@ -85,6 +85,72 @@ int main() {
         }
         CHECK(threw, "unknown column throws");
 
+        // ORM: unified op semantics through the shared engine.
+        {
+            static const char* kSchema = R"({
+                "tables": {
+                    "users": { "columns": {
+                        "id":     { "type": "int", "primaryKey": true },
+                        "name":   { "type": "text" },
+                        "score":  { "type": "float", "nullable": true },
+                        "active": { "type": "bool" }
+                    }},
+                    "posts": { "columns": {
+                        "id":      { "type": "int", "primaryKey": true },
+                        "user_id": { "type": "int", "references": { "table": "users", "column": "id" } },
+                        "title":   { "type": "text" }
+                    }}
+                }
+            })";
+            powder::Client odb("sqlite::memory:");
+            odb.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL, active INTEGER)");
+            odb.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT)");
+            powder::Orm orm(odb, kSchema);
+            auto users = orm.table("users");
+            auto posts = orm.table("posts");
+
+            CHECK(users.create(R"({"id":1,"name":"alice","score":9.5,"active":true})") == 1,
+                  "orm create");
+            CHECK(users.create_many(
+                      R"([{"id":2,"name":"bob","score":3.0,"active":false},
+                          {"id":3,"name":"carol","score":null,"active":true}])") == 2,
+                  "orm create_many");
+            posts.create_many(R"([{"id":10,"user_id":1,"title":"hi"},
+                                  {"id":11,"user_id":1,"title":"again"}])");
+
+            const std::string rows = users.find_many(
+                R"({"where":{"OR":[{"score":{"gt":5}},{"score":null}]},"orderBy":{"id":"asc"}})");
+            CHECK(rows.find("alice") != std::string::npos &&
+                      rows.find("carol") != std::string::npos &&
+                      rows.find("bob") == std::string::npos,
+                  "orm nested where");
+
+            CHECK(users.update(R"({"id":2})", R"({"score":10})") == 1, "orm update");
+            CHECK(users.count(R"({"score":{"gte":7}})") == 2, "orm count");
+            CHECK(users.exists(R"({"name":{"like":"%li%"}})"), "orm exists");
+            CHECK(users.aggregate("max", "score") == "10.0" ||
+                      users.aggregate("max", "score") == "10",
+                  "orm aggregate");
+
+            const std::string inc = posts.find_many(R"({"include":{"user":true}})");
+            CHECK(inc.find("\"user\":{") != std::string::npos &&
+                      inc.find("alice") != std::string::npos,
+                  "orm include attaches the relation");
+            const std::string grp = posts.group_by(
+                R"({"by":["user_id"],"count":true,"having":{"_count":{"gte":2}}})");
+            CHECK(grp.find("\"_count\":2") != std::string::npos, "orm groupBy + having");
+
+            bool orm_threw = false;
+            try {
+                users.remove("{}");
+            } catch (const powder::Error&) {
+                orm_threw = true;
+            }
+            CHECK(orm_threw, "orm delete with empty where throws");
+            CHECK(users.remove(R"({"id":3})") == 1, "orm delete");
+            CHECK(users.remove_all() == 2, "orm remove_all");
+        }
+
         // Move semantics: the moved-from client must not double-close.
         powder::Client moved = std::move(db);
         CHECK(moved.query("SELECT 1 AS one")["one"].i64(0) == 1, "moved client still works");

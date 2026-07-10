@@ -28,4 +28,16 @@ final class PowderNative {
     static native void freeBuffer(long address, long length);
 
     static native void close(long handle);
+
+    /** Parse powder.schema.json text into a native ORM schema handle. */
+    static native long ormSchemaNew(String schemaJson);
+
+    /** Free a handle from {@link #ormSchemaNew} (at most once). */
+    static native void ormSchemaFree(long schema);
+
+    /** Run a mutation/count ORM op; returns the affected/row count. */
+    static native long ormExecute(long handle, long schema, String opJson);
+
+    /** Run a row-returning ORM op; returns its JSON result. */
+    static native String ormFindJson(long handle, long schema, String opJson);
 }

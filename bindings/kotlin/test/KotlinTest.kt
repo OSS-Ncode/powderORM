@@ -141,5 +141,71 @@ fun main(args: Array<String>) {
         check(h.size == 1 && (h[0]["user_id"] as Long) == 1L, "having filter")
     }
 
+    // -- schema-aware ORM (shared Rust engine, unified op spec) --
+    Database.connect("sqlite::memory:", args[0]).use { db ->
+        db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL, active INTEGER)")
+        db.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT)")
+        val schema = """
+            {"tables":{
+              "users":{"columns":{
+                "id":{"type":"int","primaryKey":true},
+                "name":{"type":"text"},
+                "score":{"type":"float","nullable":true},
+                "active":{"type":"bool"}}},
+              "posts":{"columns":{
+                "id":{"type":"int","primaryKey":true},
+                "user_id":{"type":"int","references":{"table":"users","column":"id"}},
+                "title":{"type":"text"}}}}}
+        """.trimIndent()
+        db.orm(schema).use { orm ->
+            val users = orm.table("users")
+            val posts = orm.table("posts")
+
+            check(users.create(mapOf("id" to 1, "name" to "alice", "score" to 9.5, "active" to true)) == 1L,
+                "orm create")
+            check(users.createMany(listOf(
+                mapOf("id" to 2, "name" to "bob", "score" to 3.0, "active" to false),
+                mapOf("id" to 3, "name" to "carol", "score" to null, "active" to true),
+            )) == 2L, "orm createMany")
+            posts.createMany(listOf(
+                mapOf("id" to 10, "user_id" to 1, "title" to "hi"),
+                mapOf("id" to 11, "user_id" to 1, "title" to "again"),
+            ))
+
+            val rows = users.findMany(
+                where = mapOf("OR" to listOf(
+                    mapOf("score" to mapOf("gt" to 5)),
+                    mapOf("score" to null),
+                )),
+                orderBy = mapOf("id" to "asc"),
+            )
+            check(rows.size == 2 && rows[0]["name"] == "alice" && rows[1]["name"] == "carol",
+                "orm nested where")
+            check(rows[0]["active"] == true, "orm bool coercion")
+
+            check(users.update(mapOf("id" to 2), mapOf("score" to 10)) == 1L, "orm update")
+            check(users.count(mapOf("score" to mapOf("gte" to 7))) == 2L, "orm count")
+            check(users.exists(mapOf("name" to mapOf("like" to "%li%"))), "orm exists")
+            check(users.aggregate("max", "score") == 10.0, "orm aggregate")
+
+            val inc = posts.findMany(include = mapOf("user" to true), orderBy = mapOf("id" to "asc"))
+            check((inc[0]["user"] as Map<*, *>)["name"] == "alice", "orm include")
+            val joined = posts.findMany(join = mapOf("user" to true), where = mapOf("id" to 10))
+            check((joined[0]["user"] as Map<*, *>)["name"] == "alice", "orm join")
+
+            val grouped = posts.groupBy(
+                by = listOf("user_id"), count = true,
+                having = mapOf("_count" to mapOf("gte" to 2)),
+            )
+            check(grouped.size == 1 && grouped[0]["_count"] == 2L, "orm groupBy + having")
+
+            var ormThrew = false
+            try { users.delete(mapOf()) } catch (e: RuntimeException) { ormThrew = true }
+            check(ormThrew, "orm delete with empty where throws")
+            check(users.delete(mapOf("id" to 3)) == 1L, "orm delete")
+            check(users.deleteAll() == 2L, "orm deleteAll")
+        }
+    }
+
     println("kotlin binding OK ($checks checks)")
 }

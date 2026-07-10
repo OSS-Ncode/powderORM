@@ -166,6 +166,79 @@ public class PowderTest {
         try { closed.queryDirect("SELECT 1"); } catch (IllegalStateException e) { rejected++; }
         check(rejected == 3, "closed client rejects execute/query/queryDirect");
 
+        // --- ORM: unified op semantics through the shared engine -------------
+        try (Client db = Powder.connect("sqlite::memory:")) {
+            db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL, active INTEGER)");
+            db.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT)");
+            String schema = "{\"tables\":{"
+                    + "\"users\":{\"columns\":{"
+                    + "\"id\":{\"type\":\"int\",\"primaryKey\":true},"
+                    + "\"name\":{\"type\":\"text\"},"
+                    + "\"score\":{\"type\":\"float\",\"nullable\":true},"
+                    + "\"active\":{\"type\":\"bool\"}}},"
+                    + "\"posts\":{\"columns\":{"
+                    + "\"id\":{\"type\":\"int\",\"primaryKey\":true},"
+                    + "\"user_id\":{\"type\":\"int\",\"references\":{\"table\":\"users\",\"column\":\"id\"}},"
+                    + "\"title\":{\"type\":\"text\"}}}}}";
+            try (com.powder.Orm orm = db.orm(schema)) {
+                com.powder.Orm.Table users = orm.table("users");
+                com.powder.Orm.Table posts = orm.table("posts");
+
+                check(users.create(java.util.Map.of("id", 1, "name", "alice", "score", 9.5, "active", true)) == 1,
+                        "orm create");
+                java.util.Map<String, Object> carol = new java.util.LinkedHashMap<>();
+                carol.put("id", 3);
+                carol.put("name", "carol");
+                carol.put("score", null);
+                carol.put("active", true);
+                check(users.createMany(java.util.List.of(
+                        java.util.Map.of("id", 2, "name", "bob", "score", 3.0, "active", false),
+                        carol)) == 2, "orm createMany");
+                posts.createMany(java.util.List.of(
+                        java.util.Map.of("id", 10, "user_id", 1, "title", "hi"),
+                        java.util.Map.of("id", 11, "user_id", 1, "title", "again")));
+
+                java.util.List<java.util.Map<String, Object>> rows = users.findMany(java.util.Map.of(
+                        "where", java.util.Map.of("OR", java.util.List.of(
+                                java.util.Map.of("score", java.util.Map.of("gt", 5)),
+                                java.util.Collections.singletonMap("score", null))),
+                        "orderBy", java.util.Map.of("id", "asc")));
+                check(rows.size() == 2 && "alice".equals(rows.get(0).get("name"))
+                        && "carol".equals(rows.get(1).get("name")), "orm nested where");
+                check(Boolean.TRUE.equals(rows.get(0).get("active")), "orm bool coercion");
+
+                check(users.update(java.util.Map.of("id", 2), java.util.Map.of("score", 10)) == 1, "orm update");
+                check(users.count(java.util.Map.of("score", java.util.Map.of("gte", 7))) == 2, "orm count");
+                check(users.exists(java.util.Map.of("name", java.util.Map.of("like", "%li%"))), "orm exists");
+                check(users.aggregate("max", "score", null) == 10.0, "orm aggregate");
+                check(users.aggregate("sum", "score", java.util.Map.of("id", java.util.Map.of("gt", 99))) == null,
+                        "orm aggregate empty");
+
+                java.util.List<java.util.Map<String, Object>> inc = posts.findMany(java.util.Map.of(
+                        "include", java.util.Map.of("user", true), "orderBy", java.util.Map.of("id", "asc")));
+                check("alice".equals(((java.util.Map<?, ?>) inc.get(0).get("user")).get("name")), "orm include");
+                java.util.List<java.util.Map<String, Object>> joined = posts.findMany(java.util.Map.of(
+                        "join", java.util.Map.of("user", true), "where", java.util.Map.of("id", 10)));
+                check("alice".equals(((java.util.Map<?, ?>) joined.get(0).get("user")).get("name")), "orm join");
+
+                java.util.List<java.util.Map<String, Object>> grouped = posts.groupBy(java.util.Map.of(
+                        "by", java.util.List.of("user_id"), "count", true,
+                        "having", java.util.Map.of("_count", java.util.Map.of("gte", 2))));
+                check(grouped.size() == 1 && Long.valueOf(2).equals(grouped.get(0).get("_count")),
+                        "orm groupBy + having");
+
+                boolean ormThrew = false;
+                try {
+                    users.delete(java.util.Map.of());
+                } catch (RuntimeException e) {
+                    ormThrew = true;
+                }
+                check(ormThrew, "orm delete with empty where throws");
+                check(users.delete(java.util.Map.of("id", 3)) == 1, "orm delete");
+                check(users.deleteAll() == 2, "orm deleteAll");
+            }
+        }
+
         System.out.println("java jni OK (" + checks + " checks)");
     }
 

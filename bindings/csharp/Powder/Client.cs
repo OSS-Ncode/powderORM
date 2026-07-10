@@ -137,6 +137,23 @@ public sealed class Client : IDisposable
         }
     }
 
+    /// <summary>The native handle, for same-assembly extensions (the ORM).</summary>
+    internal IntPtr Handle
+    {
+        get
+        {
+            CheckOpen();
+            return _handle;
+        }
+    }
+
+    /// <summary>
+    /// Build the model layer from <c>powder.schema.json</c> text — the same
+    /// operation semantics as every other Powder ORM, executed by the shared
+    /// Rust engine.
+    /// </summary>
+    public Orm Orm(string schemaJson) => new(this, schemaJson);
+
     // -- parameter marshaling: object?[] -> JSON array string ----------------
 
     private static string ToJson(object?[] parameters)

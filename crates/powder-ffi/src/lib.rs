@@ -29,6 +29,7 @@ use std::sync::OnceLock;
 
 use tokio::runtime::Runtime;
 
+use powder_core::orm::{Orm, OrmSchema};
 use powder_core::{Client, Value};
 
 thread_local! {
@@ -265,5 +266,136 @@ pub unsafe extern "C" fn powder_free_buffer(ptr: *mut u8, len: usize) {
 pub unsafe extern "C" fn powder_close(handle: *mut Client) {
     if !handle.is_null() {
         drop(Box::from_raw(handle));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ORM: the shared engine (powder_core::orm) over the C ABI.
+//
+// A schema handle is parsed once from `powder.schema.json` text; each op then
+// crosses as one JSON object. Mutations return an affected count, row-returning
+// ops return a JSON string — the same operation spec in every language.
+// ---------------------------------------------------------------------------
+
+/// Parse `powder.schema.json` text into a schema handle for the ORM calls.
+/// Returns NULL on failure (see [`powder_last_error`]); free with
+/// [`powder_orm_schema_free`].
+///
+/// # Safety
+/// `schema_json` must be a NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn powder_orm_schema_new(schema_json: *const c_char) -> *mut OrmSchema {
+    clear_error();
+    let Some(json) = cstr(schema_json) else {
+        set_error("schema_json must be a valid UTF-8 C string");
+        return std::ptr::null_mut();
+    };
+    match OrmSchema::parse(json) {
+        Ok(s) => Box::into_raw(Box::new(s)),
+        Err(e) => {
+            set_error(e.to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Free a schema handle from [`powder_orm_schema_new`].
+///
+/// # Safety
+/// `schema` must come from [`powder_orm_schema_new`] and be freed at most once.
+#[no_mangle]
+pub unsafe extern "C" fn powder_orm_schema_free(schema: *mut OrmSchema) {
+    if !schema.is_null() {
+        drop(Box::from_raw(schema));
+    }
+}
+
+unsafe fn orm_of(handle: *mut Client, schema: *const OrmSchema) -> Option<Orm> {
+    if handle.is_null() || schema.is_null() {
+        set_error("null client or schema handle");
+        return None;
+    }
+    Some(Orm::new((*handle).clone(), (*schema).clone()))
+}
+
+/// Run a mutation (or `count`) ORM op: `create`, `createMany`, `update`,
+/// `delete`, `deleteAll`, `count`. Returns the affected/row count, or -1 on
+/// failure.
+///
+/// # Safety
+/// `handle`/`schema` must be live handles from this library; `op_json` must be
+/// a NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn powder_orm_execute(
+    handle: *mut Client,
+    schema: *const OrmSchema,
+    op_json: *const c_char,
+) -> i64 {
+    clear_error();
+    let Some(orm) = orm_of(handle, schema) else { return -1 };
+    let Some(op) = cstr(op_json) else {
+        set_error("op_json must be a valid UTF-8 C string");
+        return -1;
+    };
+    let op: serde_json::Value = match serde_json::from_str(op) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(format!("op is not valid JSON: {e}"));
+            return -1;
+        }
+    };
+    match rt().block_on(orm.execute(&op)) {
+        Ok(n) => n,
+        Err(e) => {
+            set_error(e.to_string());
+            -1
+        }
+    }
+}
+
+/// Run a row-returning ORM op: `findMany`, `findFirst`, `groupBy`,
+/// `aggregate`. On success returns a pointer to `*out_len` UTF-8 JSON bytes
+/// (not NUL-terminated — free with [`powder_free_buffer`], same convention as
+/// [`powder_query`]); on failure returns NULL.
+///
+/// # Safety
+/// As [`powder_orm_execute`], plus `out_len` must be a valid `usize` pointer.
+#[no_mangle]
+pub unsafe extern "C" fn powder_orm_find_json(
+    handle: *mut Client,
+    schema: *const OrmSchema,
+    op_json: *const c_char,
+    out_len: *mut usize,
+) -> *mut u8 {
+    clear_error();
+    if out_len.is_null() {
+        set_error("null out_len");
+        return std::ptr::null_mut();
+    }
+    *out_len = 0;
+    let Some(orm) = orm_of(handle, schema) else {
+        return std::ptr::null_mut();
+    };
+    let Some(op) = cstr(op_json) else {
+        set_error("op_json must be a valid UTF-8 C string");
+        return std::ptr::null_mut();
+    };
+    let op: serde_json::Value = match serde_json::from_str(op) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(format!("op is not valid JSON: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    match rt().block_on(orm.find_json(&op)) {
+        Ok(rows) => {
+            let boxed: Box<[u8]> = rows.to_string().into_bytes().into_boxed_slice();
+            *out_len = boxed.len();
+            Box::into_raw(boxed) as *mut u8
+        }
+        Err(e) => {
+            set_error(e.to_string());
+            std::ptr::null_mut()
+        }
     }
 }

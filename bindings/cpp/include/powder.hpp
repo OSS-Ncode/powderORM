@@ -310,6 +310,9 @@ public:
         }
     }
 
+    /// The raw C-ABI handle (for the ORM layer and other extensions).
+    PowderClient* native_handle() const { return handle_; }
+
 private:
     void check_open() const {
         if (!handle_) throw Error("client is closed");
@@ -318,6 +321,175 @@ private:
     PowderClient* handle_ = nullptr;
     int tx_depth_ = 0;
 };
+
+class OrmTable;
+
+/// The model layer over a Client: the same operation semantics as the other
+/// Powder ORMs, executed by the shared Rust engine. Options cross as JSON
+/// object strings (build them with your JSON library of choice — or string
+/// literals); rows come back as a JSON string.
+///
+///   powder::Orm orm(db, schema_json);           // powder.schema.json text
+///   auto users = orm.table("users");
+///   users.create(R"({"id":1,"name":"alice","score":9.5,"active":true})");
+///   std::string rows = users.find_many(
+///       R"({"where":{"active":true,"score":{"gte":5}},
+///           "orderBy":{"score":"desc"},"limit":10})");
+class Orm {
+public:
+    Orm(Client& client, const std::string& schema_json)
+        : client_(&client), schema_(powder_orm_schema_new(schema_json.c_str())) {
+        if (!schema_) throw Error(detail::last_error());
+    }
+
+    Orm(Orm&& other) noexcept : client_(other.client_), schema_(other.schema_) {
+        other.schema_ = nullptr;
+    }
+    Orm& operator=(Orm&& other) noexcept {
+        if (this != &other) {
+            release();
+            client_ = other.client_;
+            schema_ = other.schema_;
+            other.schema_ = nullptr;
+        }
+        return *this;
+    }
+    Orm(const Orm&) = delete;
+    Orm& operator=(const Orm&) = delete;
+    ~Orm() { release(); }
+
+    /// Handle for one table's CRUD surface.
+    inline OrmTable table(std::string name);
+
+    /// Run a raw op object (`{"op":"findMany","table":"users",...}`) and
+    /// return its JSON result — the low-level unified spec.
+    std::string find_json(const std::string& op_json) {
+        check();
+        size_t len = 0;
+        unsigned char* buf =
+            powder_orm_find_json(client_->native_handle(), schema_, op_json.c_str(), &len);
+        if (!buf) throw Error(detail::last_error());
+        std::string out(reinterpret_cast<const char*>(buf), len);
+        powder_free_buffer(buf, len);
+        return out;
+    }
+
+    /// Run a raw mutation/count op; returns the affected/row count.
+    int64_t execute(const std::string& op_json) {
+        check();
+        const int64_t n =
+            powder_orm_execute(client_->native_handle(), schema_, op_json.c_str());
+        if (n < 0) throw Error(detail::last_error());
+        return n;
+    }
+
+private:
+    void check() const {
+        if (!schema_ || !client_->native_handle()) throw Error("orm or client is closed");
+    }
+    void release() {
+        if (schema_) {
+            powder_orm_schema_free(schema_);
+            schema_ = nullptr;
+        }
+    }
+
+    Client* client_ = nullptr;
+    PowderOrmSchema* schema_ = nullptr;
+};
+
+/// One table's unified CRUD surface. Option arguments are JSON object
+/// strings using the same keys as the TS/Python/Go ORMs (`where`, `orderBy`,
+/// `limit`, `offset`, `include`, `join`, ...).
+class OrmTable {
+public:
+    OrmTable(Orm& orm, std::string name) : orm_(&orm), name_(std::move(name)) {}
+
+    /// Rows matching `opts` as a JSON array string. `opts` may be "" or "{}".
+    std::string find_many(const std::string& opts = "{}") {
+        return orm_->find_json(op("findMany", opts));
+    }
+
+    /// First matching row as JSON — an object, or "null".
+    std::string find_first(const std::string& opts = "{}") {
+        return orm_->find_json(op("findFirst", opts));
+    }
+
+    /// INSERT one row: `create(R"({"id":1,"name":"alice"})")`.
+    int64_t create(const std::string& data_json) {
+        return orm_->execute(op("create", "{\"data\":" + data_json + "}"));
+    }
+
+    /// Bulk INSERT: `create_many(R"([{...},{...}])")` (chunked multi-row VALUES).
+    int64_t create_many(const std::string& rows_json) {
+        return orm_->execute(op("createMany", "{\"rows\":" + rows_json + "}"));
+    }
+
+    /// UPDATE matching rows; returns the affected count.
+    int64_t update(const std::string& where_json, const std::string& data_json) {
+        return orm_->execute(
+            op("update", "{\"where\":" + where_json + ",\"data\":" + data_json + "}"));
+    }
+
+    /// DELETE matching rows (an empty where is rejected — use remove_all).
+    int64_t remove(const std::string& where_json) {
+        return orm_->execute(op("delete", "{\"where\":" + where_json + "}"));
+    }
+
+    /// DELETE every row (explicit opt-in).
+    int64_t remove_all() { return orm_->execute(op("deleteAll", "{}")); }
+
+    /// COUNT rows matching where ("{}" counts everything).
+    int64_t count(const std::string& where_json = "{}") {
+        return orm_->execute(op("count", "{\"where\":" + where_json + "}"));
+    }
+
+    /// Whether at least one row matches.
+    bool exists(const std::string& where_json = "{}") {
+        return orm_->find_json(op("findFirst", "{\"where\":" + where_json + ",\"limit\":1}")) !=
+               "null";
+    }
+
+    /// SUM/AVG/MIN/MAX over one column; JSON number, or "null" when no rows.
+    std::string aggregate(const std::string& fn, const std::string& column,
+                          const std::string& where_json = "{}") {
+        return orm_->find_json(op("aggregate", "{\"fn\":\"" + fn + "\",\"column\":\"" + column +
+                                                   "\",\"where\":" + where_json + "}"));
+    }
+
+    /// GROUP BY with aggregates (`by`, `count`, `sum`, `avg`, `min`, `max`,
+    /// `having`, `orderBy`, ...); JSON array with `_count`/`_sum_<col>` aliases.
+    std::string group_by(const std::string& opts) {
+        return orm_->find_json(op("groupBy", opts));
+    }
+
+private:
+    /// Splice `{"op":...,"table":...}` together with the caller's options.
+    std::string op(const char* name, const std::string& opts) const {
+        std::string out = "{\"op\":\"";
+        out += name;
+        out += "\",\"table\":\"";
+        out += name_;
+        out += '"';
+        // Merge the option object's members, if any.
+        const size_t open = opts.find('{');
+        const size_t close = opts.rfind('}');
+        if (open != std::string::npos && close != std::string::npos && close > open + 1) {
+            const std::string inner = opts.substr(open + 1, close - open - 1);
+            if (inner.find_first_not_of(" \t\r\n") != std::string::npos) {
+                out += ',';
+                out += inner;
+            }
+        }
+        out += '}';
+        return out;
+    }
+
+    Orm* orm_;
+    std::string name_;
+};
+
+inline OrmTable Orm::table(std::string name) { return OrmTable(*this, std::move(name)); }
 
 } // namespace powder
 

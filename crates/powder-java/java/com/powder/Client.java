@@ -102,12 +102,28 @@ public final class Client implements AutoCloseable {
         }
     }
 
+    /**
+     * Build the model layer from {@code powder.schema.json} text — the same
+     * operation semantics as every other Powder ORM, executed by the shared
+     * Rust engine.
+     */
+    public Orm orm(String schemaJson) {
+        checkOpen();
+        return new Orm(this, schemaJson);
+    }
+
     @Override
     public void close() {
         if (handle != 0) {
             PowderNative.close(handle);
             handle = 0;
         }
+    }
+
+    /** The native handle, for same-package extensions (the ORM). */
+    long handle() {
+        checkOpen();
+        return handle;
     }
 
     private void checkOpen() {

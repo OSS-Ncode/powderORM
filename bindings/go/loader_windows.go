@@ -25,6 +25,10 @@ var (
 	procFreeBuffer    *syscall.Proc
 	procClose         *syscall.Proc
 	procLastErrorCopy *syscall.Proc
+	procOrmSchemaNew  *syscall.Proc
+	procOrmSchemaFree *syscall.Proc
+	procOrmExecute    *syscall.Proc
+	procOrmFindJSON   *syscall.Proc
 )
 
 // Load binds the native Powder library (powder_ffi.dll) from an absolute path.
@@ -54,6 +58,10 @@ func Load(path string) error {
 		procFreeBuffer = find("powder_free_buffer")
 		procClose = find("powder_close")
 		procLastErrorCopy = find("powder_last_error_copy")
+		procOrmSchemaNew = find("powder_orm_schema_new")
+		procOrmSchemaFree = find("powder_orm_schema_free")
+		procOrmExecute = find("powder_orm_execute")
+		procOrmFindJSON = find("powder_orm_find_json")
 		loaded = loadErr == nil
 	})
 	return loadErr
@@ -161,4 +169,57 @@ func nativeQuery(handle uintptr, sql, paramsJSON string) ([]byte, error) {
 
 func nativeClose(handle uintptr) {
 	procClose.Call(handle)
+}
+
+func nativeOrmSchemaNew(schemaJSON string) (uintptr, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	bjson, pjson := cstring(schemaJSON)
+	h, _, _ := procOrmSchemaNew.Call(pjson)
+	runtime.KeepAlive(bjson)
+	if h == 0 {
+		return 0, lastError("schema parse failed")
+	}
+	return h, nil
+}
+
+func nativeOrmSchemaFree(schema uintptr) {
+	procOrmSchemaFree.Call(schema)
+}
+
+func nativeOrmExecute(handle, schema uintptr, opJSON string) (int64, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	bop, pop := cstring(opJSON)
+	r, _, _ := procOrmExecute.Call(handle, schema, pop)
+	runtime.KeepAlive(bop)
+	n := int64(r)
+	if n < 0 {
+		return 0, lastError("orm execute failed")
+	}
+	return n, nil
+}
+
+func nativeOrmFindJSON(handle, schema uintptr, opJSON string) (string, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	bop, pop := cstring(opJSON)
+	var outLen uintptr
+	ptr, _, _ := procOrmFindJSON.Call(handle, schema, pop, uintptr(unsafe.Pointer(&outLen)))
+	runtime.KeepAlive(bop)
+	if ptr == 0 {
+		return "", lastError("orm find failed")
+	}
+	// Copy into Go memory through the native helper (Go must not dereference a
+	// foreign uintptr), then hand the allocation back — same as nativeQuery.
+	out := make([]byte, int(outLen))
+	if outLen > 0 {
+		procCopyOut.Call(ptr, outLen, uintptr(unsafe.Pointer(&out[0])))
+		runtime.KeepAlive(out)
+	}
+	procFreeBuffer.Call(ptr, outLen)
+	return string(out), nil
 }

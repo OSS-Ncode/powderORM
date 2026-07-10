@@ -70,6 +70,52 @@ void powder_free_buffer(unsigned char *ptr, size_t len);
 /* Close a connection (at most once). */
 void powder_close(PowderClient *client);
 
+/*
+ * ---- ORM ------------------------------------------------------------------
+ *
+ * The shared ORM engine: parse `powder.schema.json` once, then send each
+ * operation as one JSON object — the same spec in every Powder language.
+ *
+ *   {"op":"findMany","table":"users",
+ *    "where":{"active":true,"score":{"gte":5}},
+ *    "orderBy":{"score":"desc"},"limit":10}
+ *
+ * Ops: findMany, findFirst, groupBy, aggregate (row-returning, use
+ * powder_orm_find_json) and create, createMany, update, delete, deleteAll,
+ * count (mutations/counts, use powder_orm_execute). `where` supports
+ * eq/ne/gt/gte/lt/lte/like/in plus AND/OR/NOT nesting; findMany also takes
+ * `include` (batched relation load) and `join` (single-query belongsTo).
+ */
+
+/* Opaque parsed-schema handle. */
+typedef struct PowderOrmSchema PowderOrmSchema;
+
+/* Parse powder.schema.json text; NULL on failure. Free with
+ * powder_orm_schema_free. */
+PowderOrmSchema *powder_orm_schema_new(const char *schema_json);
+
+/* Free a schema handle (at most once). */
+void powder_orm_schema_free(PowderOrmSchema *schema);
+
+/*
+ * Run a mutation (or count) op: create, createMany, update, delete,
+ * deleteAll, count. Returns the affected/row count, or -1 on failure.
+ */
+int64_t powder_orm_execute(PowderClient *client,
+                           const PowderOrmSchema *schema,
+                           const char *op_json);
+
+/*
+ * Run a row-returning op: findMany, findFirst, groupBy, aggregate. On success
+ * returns `*out_len` bytes of UTF-8 JSON (not NUL-terminated; findMany/groupBy
+ * yield an array, findFirst an object or null, aggregate a number or null).
+ * Release with powder_free_buffer(ptr, len). Returns NULL on failure.
+ */
+unsigned char *powder_orm_find_json(PowderClient *client,
+                                    const PowderOrmSchema *schema,
+                                    const char *op_json,
+                                    size_t *out_len);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
