@@ -20,7 +20,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Powder team"]
-repository = "https://github.com/powder/powder"
+repository = "https://github.com/OSS-Ncode/powderORM"
 
 [workspace.dependencies]
 powder-core = { path = "crates/powder-core" }

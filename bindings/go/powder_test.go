@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	powder "github.com/powder/powder-go"
+	powder "github.com/OSS-Ncode/powderORM/bindings/go"
 )
 
 // The native library path comes from POWDER_LIB so the test runs on any

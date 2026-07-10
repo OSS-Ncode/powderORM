@@ -1,81 +1,296 @@
 name: Release
 
-# Runs on every push, but the whole job is gated on the commit message
-# containing "[RELEASE]" (see the job-level `if` below) so ordinary commits
-# don't spend self-hosted runner time.
+# Publish to crates.io, npm, and PyPI on a version tag.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The tag version MUST match the version in Cargo.toml (workspace),
+# crates/powder-node/package.json, and crates/powder-python/pyproject.toml.
+# The `verify-version` job fails the release if they drift.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   CARGO_REGISTRY_TOKEN  — crates.io API token
+#   NPM_TOKEN             — npmjs.com automation token with publish rights to @powder
+# PyPI uses OIDC Trusted Publishing (no token) — configure a trusted publisher
+# for this repo + workflow at https://pypi.org/manage/project/powder/settings/publishing/
 on:
   push:
-    branches:
-      - "**"
+    tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: write # create the GitHub Release
 
 jobs:
-  release:
-    if: contains(github.event.head_commit.message, '[RELEASE]')
-    runs-on: [self-hosted, macOS, ARM64]
-    defaults:
-      run:
-        shell: bash
+  # ---------------------------------------------------------------------------
+  verify-version:
+    name: Verify tag matches package versions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      - id: v
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+          cargo_v=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          node_v=$(node -p "require('./crates/powder-node/package.json').version")
+          py_v=$(grep -m1 '^version' crates/powder-python/pyproject.toml | sed -E 's/.*"(.*)".*/\1/')
+          echo "tag=$tag cargo=$cargo_v node=$node_v py=$py_v"
+          for got in "$cargo_v" "$node_v" "$py_v"; do
+            if [ "$got" != "$tag" ]; then
+              echo "::error::version mismatch: tag=$tag but found $got"
+              exit 1
+            fi
+          done
 
-      - name: Put cargo on PATH
-        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+  # ---------------------------------------------------------------------------
+  crates-io:
+    name: Publish to crates.io
+    needs: verify-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # powder-core and powder-cli have no internal path deps, so each publishes
+      # standalone. `cargo publish` blocks until the index updates.
+      - name: Publish powder-core
+        run: cargo publish -p powder-core --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+      - name: Publish powder-cli
+        run: cargo publish -p powder-cli --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
 
+  # ---------------------------------------------------------------------------
+  npm-build:
+    name: npm prebuild (${{ matrix.target }})
+    needs: verify-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { host: macos-latest, target: aarch64-apple-darwin }
+          - { host: macos-latest, target: x86_64-apple-darwin }
+          - { host: windows-latest, target: x86_64-pc-windows-msvc }
+          - { host: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          # Extend later: aarch64-unknown-linux-gnu (cross), *-musl, win arm64.
+    runs-on: ${{ matrix.host }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "crates/powder-node"
       - uses: actions/setup-node@v4
         with:
-          node-version: "24"
-
-      - uses: actions/setup-python@v5
+          node-version: 20
+      - name: Build native addon
+        working-directory: crates/powder-node
+        run: |
+          npm install
+          npx napi build --platform --release --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
         with:
-          python-version: "3.12"
+          name: napi-${{ matrix.target }}
+          path: crates/powder-node/*.node
+          if-no-files-found: error
 
-      - name: Toolchain versions
-        run: |
-          rustc --version
-          cargo --version
-          node --version
-          python3 --version
-
-      - name: Clippy (warnings fail the build)
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-      - name: Test
-        run: cargo test --workspace --all-features
-
-      - name: Build ncode-core (release)
-        run: cargo build --release -p ncode-core
-
-      - name: Build Node native addon
-        working-directory: crates/ncode-node
-        run: |
-          npm ci
-          npm run build
-
-      - name: Build Python wheel
-        working-directory: crates/ncode-python
-        run: |
-          python3 -m pip install --upgrade pip maturin
-          maturin build --release
-
-      - name: Read release version from Cargo.toml
-        id: version
-        run: |
-          version=$(grep -m1 '^version' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Stage release artifacts
-        run: |
-          mkdir -p dist
-          cp crates/ncode-node/index.*.node dist/
-          cp target/wheels/*.whl dist/
-          ls -la dist
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+  npm-publish:
+    name: Publish to npm
+    needs: npm-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: v${{ steps.version.outputs.version }}
-          files: dist/*
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+      - name: Collect prebuilt addons
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: napi-*
+      - name: Assemble + publish
+        working-directory: crates/powder-node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm install
+          npm run build:ts 2>/dev/null || npx tsc -p tsconfig.json   # emit dist/
+          # napi collects ../../artifacts/napi-*/*.node into per-platform npm packages
+          npx napi artifacts --dir ../../artifacts
+          npx napi prepublish -t npm --skip-gh-release
+          npm publish --access public
+
+  # ---------------------------------------------------------------------------
+  python-wheels:
+    name: PyPI wheel (${{ matrix.target }})
+    needs: verify-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { host: ubuntu-latest, target: x86_64, manylinux: auto }
+          - { host: ubuntu-latest, target: aarch64, manylinux: auto }
+          - { host: macos-latest, target: aarch64, manylinux: "" }
+          - { host: macos-latest, target: x86_64, manylinux: "" }
+          - { host: windows-latest, target: x64, manylinux: "" }
+    runs-on: ${{ matrix.host }}
+    steps:
+      - uses: actions/checkout@v4
+      # abi3 (see powder-python/Cargo.toml) → one wheel per platform, all 3.9+.
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist --manifest-path crates/powder-python/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.host }}-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  python-sdist:
+    name: PyPI sdist
+    needs: verify-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist --manifest-path crates/powder-python/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  python-publish:
+    name: Publish to PyPI
+    needs: [python-wheels, python-sdist]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # OIDC Trusted Publishing — no token needed
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "{wheel-*,sdist}"
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+
+  # ---------------------------------------------------------------------------
+  # NuGet (C#). Opt-in: set repo variable ENABLE_NUGET=true and secret NUGET_API_KEY.
+  # Builds powder-ffi per RID and bundles it into the package's runtimes/ folder.
+  nuget-natives:
+    name: NuGet native (${{ matrix.rid }})
+    needs: verify-version
+    if: vars.ENABLE_NUGET == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { host: ubuntu-latest, target: x86_64-unknown-linux-gnu, rid: linux-x64, lib: libpowder_ffi.so }
+          - { host: macos-latest, target: aarch64-apple-darwin, rid: osx-arm64, lib: libpowder_ffi.dylib }
+          - { host: macos-latest, target: x86_64-apple-darwin, rid: osx-x64, lib: libpowder_ffi.dylib }
+          - { host: windows-latest, target: x86_64-pc-windows-msvc, rid: win-x64, lib: powder_ffi.dll }
+    runs-on: ${{ matrix.host }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build powder-ffi
+        run: cargo build -p powder-ffi --release --target ${{ matrix.target }}
+      - name: Stage native lib
+        shell: bash
+        run: |
+          mkdir -p native/${{ matrix.rid }}
+          cp "target/${{ matrix.target }}/release/${{ matrix.lib }}" "native/${{ matrix.rid }}/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffi-${{ matrix.rid }}
+          path: native/${{ matrix.rid }}/*
+          if-no-files-found: error
+
+  nuget-publish:
+    name: Publish to NuGet
+    needs: [verify-version, nuget-natives]
+    if: vars.ENABLE_NUGET == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Collect natives
+        uses: actions/download-artifact@v4
+        with:
+          path: ffi
+          pattern: ffi-*
+      - name: Place natives into runtimes/
+        shell: bash
+        run: |
+          base=bindings/csharp/Powder/runtimes
+          for rid in linux-x64 osx-x64 osx-arm64 win-x64; do
+            src="ffi/ffi-$rid"
+            [ -d "$src" ] || continue
+            mkdir -p "$base/$rid/native"
+            cp "$src"/* "$base/$rid/native/"
+          done
+          find "$base" -type f
+      - name: Pack + push
+        run: |
+          dotnet pack bindings/csharp/Powder/Powder.csproj -c Release \
+            -p:Version=${{ needs.verify-version.outputs.version }} -o out
+          dotnet nuget push "out/*.nupkg" \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+  # ---------------------------------------------------------------------------
+  # Maven Central (Java + Kotlin). Opt-in: set repo variable ENABLE_MAVEN=true and
+  # secrets OSSRH_USERNAME, OSSRH_PASSWORD, MAVEN_SIGNING_KEY, MAVEN_SIGNING_PASSWORD.
+  # Publishes pure-JVM jars; the JNI native (powder_java) ships via the GitHub
+  # Release and is loaded with Powder.loadLibrary(path) / POWDER_LIB.
+  maven-publish:
+    name: Publish to Maven Central
+    needs: verify-version
+    if: vars.ENABLE_MAVEN == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10"
+      - name: Publish
+        working-directory: jvm
+        env:
+          ORG_GRADLE_PROJECT_ossrhUsername: ${{ secrets.OSSRH_USERNAME }}
+          ORG_GRADLE_PROJECT_ossrhPassword: ${{ secrets.OSSRH_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.MAVEN_SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
+        run: |
+          gradle :powder-java:publish :powder-kotlin:publish \
+            -Pversion=${{ needs.verify-version.outputs.version }}
+
+  # ---------------------------------------------------------------------------
+  github-release:
+    name: GitHub Release
+    needs: [crates-io, npm-publish, python-publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true

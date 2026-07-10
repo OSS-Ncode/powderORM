@@ -22,7 +22,7 @@ POWDER_LIB=<target>/release/powder_ffi.dll go test ./...
 ## 사용법
 
 ```go
-import powder "github.com/powder/powder-go"
+import powder "github.com/OSS-Ncode/powderORM/bindings/go"
 
 if err := powder.Load("/path/to/powder_ffi.dll"); err != nil { panic(err) }
 

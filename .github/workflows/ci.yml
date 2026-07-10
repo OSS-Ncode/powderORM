@@ -1,0 +1,79 @@
+name: CI
+
+# Build + test the published packages on every PR and every push to main.
+# Release/publishing lives in release.yml (tag-triggered).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# One in-flight run per ref; new pushes cancel the old run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust — clippy + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # postgres/mysql are pure-Rust drivers, so --all-features compiles without
+      # system DB client libs. Their live tests self-skip when the *_URL env
+      # vars are absent, so they don't need a server here.
+      - name: Clippy (warnings fail the build)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --workspace --all-features
+
+  node:
+    name: Node — build napi addon + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build + test @powder/node
+        working-directory: crates/powder-node
+        run: |
+          npm install
+          npm run build:debug   # debug is enough for a CI smoke check
+          npm test
+
+  python:
+    name: Python — build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build + test powder (python)
+        working-directory: crates/powder-python
+        run: |
+          python -m pip install --upgrade pip maturin pytest
+          maturin develop
+          pytest tests
+
+  docs:
+    name: Docs — build check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build docs-site (static export)
+        working-directory: docs-site
+        run: |
+          npm install --no-audit --no-fund
+          npm run build

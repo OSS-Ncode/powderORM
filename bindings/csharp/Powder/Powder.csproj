@@ -7,7 +7,40 @@
     <RootNamespace>Powder</RootNamespace>
     <AssemblyName>Powder</AssemblyName>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Description>C# binding for the Powder engine (zero-copy columnar database client)</Description>
   </PropertyGroup>
+
+  <!-- NuGet package metadata (`dotnet pack -c Release`). Version is passed on the
+       command line in CI: `dotnet pack -p:Version=$TAG`. -->
+  <PropertyGroup>
+    <PackageId>Powder</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Powder team</Authors>
+    <Description>C# binding for the Powder engine — a zero-copy columnar database client with a Rust core.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/OSS-Ncode/powderORM</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/OSS-Ncode/powderORM</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>database;sqlite;postgres;mysql;orm;columnar;native</PackageTags>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!-- Native powder_ffi libraries, one per runtime identifier. CI builds the
+       powder-ffi crate for each target and drops the shared library into
+       runtimes/<rid>/native/ before `dotnet pack`. Consumers get the right one
+       automatically via NuGet's runtime resolution; POWDER_LIB still overrides.
+       Missing files are skipped so a local `dotnet build` without natives works. -->
+  <ItemGroup>
+    <None Include="runtimes/win-x64/native/powder_ffi.dll" Condition="Exists('runtimes/win-x64/native/powder_ffi.dll')" Pack="true" PackagePath="runtimes/win-x64/native/" />
+    <None Include="runtimes/linux-x64/native/libpowder_ffi.so" Condition="Exists('runtimes/linux-x64/native/libpowder_ffi.so')" Pack="true" PackagePath="runtimes/linux-x64/native/" />
+    <None Include="runtimes/linux-arm64/native/libpowder_ffi.so" Condition="Exists('runtimes/linux-arm64/native/libpowder_ffi.so')" Pack="true" PackagePath="runtimes/linux-arm64/native/" />
+    <None Include="runtimes/osx-x64/native/libpowder_ffi.dylib" Condition="Exists('runtimes/osx-x64/native/libpowder_ffi.dylib')" Pack="true" PackagePath="runtimes/osx-x64/native/" />
+    <None Include="runtimes/osx-arm64/native/libpowder_ffi.dylib" Condition="Exists('runtimes/osx-arm64/native/libpowder_ffi.dylib')" Pack="true" PackagePath="runtimes/osx-arm64/native/" />
+  </ItemGroup>
 
 </Project>
