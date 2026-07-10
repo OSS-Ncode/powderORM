@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Client, PowderError, PowderTable, runNamedQuery, type TableMeta } from "./index.js";
+import {
+  Client,
+  PowderError,
+  PowderTable,
+  runNamedQuery,
+  type TableMeta,
+  type Where,
+} from "./index.js";
 
 interface Post {
   id: number;
@@ -660,4 +667,97 @@ test("$extend grafts user methods onto tables (and into transactions)", async ()
     () => extendPowder(base, { nope: { x() {} } } as never),
     PowderError,
   );
+});
+
+// --- OR / nested logical WHERE conditions -----------------------------------
+
+async function seedUsers(rows: User[]): Promise<PowderTable<User>> {
+  const users = await setup();
+  await users.createMany(rows);
+  return users;
+}
+
+test("where OR: two branches", async () => {
+  const users = await seedUsers([
+    { id: 1, name: "alice", score: 95, active: true },
+    { id: 2, name: "bob", score: 40, active: true },
+    { id: 3, name: "vip_carol", score: 10, active: true },
+  ]);
+
+  const rows = await users.findMany({
+    where: { OR: [{ score: { gte: 90 } }, { name: { like: "vip%" } }] },
+    orderBy: { id: "asc" },
+  });
+  assert.deepEqual(rows.map((r) => r.id), [1, 3]);
+});
+
+test("where NOT and nested AND inside OR + top-level AND precedence", async () => {
+  const users = await seedUsers([
+    { id: 1, name: "a", score: 95, active: true },
+    { id: 2, name: "b", score: 95, active: false },
+    { id: 3, name: "c", score: 5, active: true },
+  ]);
+
+  // active = true AND (score >= 90 OR (id = 3 AND score = 5))
+  const rows = await users.findMany({
+    where: {
+      active: true,
+      OR: [{ score: { gte: 90 } }, { AND: [{ id: 3 }, { score: 5 }] }],
+    },
+    orderBy: { id: "asc" },
+  });
+  assert.deepEqual(rows.map((r) => r.id), [1, 3]);
+
+  const notRows = await users.findMany({
+    where: { NOT: { active: true } },
+    orderBy: { id: "asc" },
+  });
+  assert.deepEqual(notRows.map((r) => r.id), [2]);
+});
+
+test("where empty OR matches nothing; delete of effectively-empty where is rejected", async () => {
+  const users = await seedUsers([{ id: 1, name: "a", score: 1, active: true }]);
+
+  assert.equal((await users.findMany({ where: { OR: [] } })).length, 0);
+  await assert.rejects(() => users.delete({ AND: [] }), /non-empty where/);
+  assert.equal(await users.count(), 1); // table untouched
+});
+
+test("where param order stays in sync across mixed ops + logical groups", async () => {
+  const users = await seedUsers([
+    { id: 1, name: "alice", score: 50, active: true },
+    { id: 2, name: "alan", score: 80, active: true },
+    { id: 3, name: "zoe", score: 80, active: true },
+  ]);
+
+  // name LIKE 'al%' AND (score = 80 OR id IN (1))
+  const rows = await users.findMany({
+    where: { name: { like: "al%" }, OR: [{ score: 80 }, { id: { in: [1] } }] },
+    orderBy: { id: "asc" },
+  });
+  assert.deepEqual(rows.map((r) => r.id), [1, 2]);
+});
+
+test("unknown column inside OR throws PowderError", async () => {
+  const users = await setup();
+  await assert.rejects(
+    () => users.findMany({ where: { OR: [{ nope: 1 } as unknown as Where<User>] } }),
+    /unknown column `nope`/,
+  );
+});
+
+test("finder: chained where() combines a column filter with an OR group across calls", async () => {
+  const users = await seedUsers([
+    { id: 1, name: "alice", score: 95, active: true },
+    { id: 2, name: "alan", score: 10, active: true },
+    { id: 3, name: "zed", score: 95, active: true },
+  ]);
+
+  // (name LIKE 'al%') AND (score >= 90 OR id = 2)  -> ids 1, 2
+  const rows = await users
+    .where({ name: { like: "al%" } })
+    .where({ OR: [{ score: { gte: 90 } }, { id: 2 }] })
+    .orderBy("id")
+    .all();
+  assert.deepEqual(rows.map((r) => r.id), [1, 2]);
 });

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Powder.Tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0408303886d43fbd983ef2a7e44d3a898832dbeb")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+1ddcff14656d94188b176112423b12aa48181897")]
 [assembly: System.Reflection.AssemblyProductAttribute("Powder.Tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Powder.Tests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

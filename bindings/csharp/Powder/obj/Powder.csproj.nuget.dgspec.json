@@ -5,7 +5,7 @@
   },
   "projects": {
     "/Volumes/Ncode/oss-Ncode/bindings/csharp/Powder/Powder.csproj": {
-      "version": "1.0.0",
+      "version": "0.1.0",
       "restore": {
         "projectUniqueName": "/Volumes/Ncode/oss-Ncode/bindings/csharp/Powder/Powder.csproj",
         "projectName": "Powder",

@@ -73,9 +73,16 @@ export interface WhereOps<V> {
   in?: readonly V[];
 }
 
+/** Logical grouping keys, Prisma-style. Combine with column conditions (all AND'd). */
+export type WhereLogic<T> = {
+  AND?: Where<T> | Where<T>[];
+  OR?: Where<T>[];
+  NOT?: Where<T> | Where<T>[];
+};
+
 export type Where<T> = {
   [K in keyof T]?: T[K] | WhereOps<NonNullable<T[K]>> | null;
-};
+} & WhereLogic<T>;
 
 /**
  * Relation include map. A value of `true` loads that relation; an object form
@@ -244,6 +251,7 @@ export class PowderTable<T extends object, Inc extends IncludeMap = IncludeMap> 
   private whereShape(where: Where<T>, qualify: string): string {
     let key = qualify;
     for (const [col, cond] of Object.entries(where)) {
+      if (col === "AND" || col === "OR" || col === "NOT") continue;
       if (cond === undefined) continue;
       if (cond === null) {
         key += `${col}null`;
@@ -263,13 +271,30 @@ export class PowderTable<T extends object, Inc extends IncludeMap = IncludeMap> 
         key += `${col}=`;
       }
     }
+    const logic = where as WhereLogic<T>;
+    if (logic.AND !== undefined) {
+      key += "AND[";
+      for (const w of Array.isArray(logic.AND) ? logic.AND : [logic.AND]) key += this.whereShape(w, qualify) + ";";
+      key += "]";
+    }
+    if (logic.OR !== undefined) {
+      key += `OR${logic.OR.length}[`;
+      for (const w of logic.OR) key += this.whereShape(w, qualify) + ";";
+      key += "]";
+    }
+    if (logic.NOT !== undefined) {
+      key += "NOT[";
+      for (const w of Array.isArray(logic.NOT) ? logic.NOT : [logic.NOT]) key += this.whereShape(w, qualify) + ";";
+      key += "]";
+    }
     return key;
   }
 
-  /** Collect bound values in placeholder order, mirroring {@link buildWhereClause}. */
+  /** Collect bound values in placeholder order, mirroring {@link renderGroup}. */
   private collectWhereParams(where: Where<T>): Param[] {
     const params: Param[] = [];
-    for (const cond of Object.values(where)) {
+    for (const [col, cond] of Object.entries(where)) {
+      if (col === "AND" || col === "OR" || col === "NOT") continue;
       if (cond === undefined || cond === null) continue;
       if (typeof cond === "object" && !Array.isArray(cond)) {
         for (const [op, value] of Object.entries(cond as WhereOps<unknown>)) {
@@ -286,13 +311,30 @@ export class PowderTable<T extends object, Inc extends IncludeMap = IncludeMap> 
         params.push(toParam(cond));
       }
     }
+    const logic = where as WhereLogic<T>;
+    if (logic.AND !== undefined) {
+      for (const w of Array.isArray(logic.AND) ? logic.AND : [logic.AND]) {
+        params.push(...this.collectWhereParams(w));
+      }
+    }
+    if (logic.OR !== undefined) {
+      for (const w of logic.OR) params.push(...this.collectWhereParams(w));
+    }
+    if (logic.NOT !== undefined) {
+      for (const w of Array.isArray(logic.NOT) ? logic.NOT : [logic.NOT]) {
+        params.push(...this.collectWhereParams(w));
+      }
+    }
     return params;
   }
 
-  /** Render the SQL fragment for a predicate (values are not read). */
-  private buildWhereClause(where: Where<T>, q: string): string {
+  /** Render a where group to a SQL fragment (no leading WHERE, no outer parens).
+   *  Every sub-group is parenthesized so precedence is preserved. Returns "" when
+   *  the group carries no effective predicate. */
+  private renderGroup(where: Where<T>, q: string): string {
     const parts: string[] = [];
     for (const [col, cond] of Object.entries(where)) {
+      if (col === "AND" || col === "OR" || col === "NOT") continue;
       const bare = this.meta.sql.ident[col];
       if (!bare) throw new PowderError(`unknown column \`${col}\``, this.meta.table, callSite());
       const ident = `${q}${bare}`;
@@ -322,7 +364,34 @@ export class PowderTable<T extends object, Inc extends IncludeMap = IncludeMap> 
         parts.push(`${ident} = ?`);
       }
     }
-    return parts.length ? ` WHERE ${parts.join(" AND ")}` : "";
+    const logic = where as WhereLogic<T>;
+    if (logic.AND !== undefined) {
+      for (const w of Array.isArray(logic.AND) ? logic.AND : [logic.AND]) {
+        const s = this.renderGroup(w, q);
+        if (s) parts.push(`(${s})`);
+      }
+    }
+    if (logic.OR !== undefined) {
+      if (logic.OR.length === 0) {
+        parts.push("1 = 0"); // OR of nothing matches nothing
+      } else {
+        const subs = logic.OR.map((w) => this.renderGroup(w, q)).filter((s) => s);
+        if (subs.length) parts.push(`(${subs.map((s) => `(${s})`).join(" OR ")})`);
+      }
+    }
+    if (logic.NOT !== undefined) {
+      for (const w of Array.isArray(logic.NOT) ? logic.NOT : [logic.NOT]) {
+        const s = this.renderGroup(w, q);
+        if (s) parts.push(`NOT (${s})`);
+      }
+    }
+    return parts.join(" AND ");
+  }
+
+  /** Render the SQL fragment for a predicate (values are not read). */
+  private buildWhereClause(where: Where<T>, q: string): string {
+    const frag = this.renderGroup(where, q);
+    return frag ? ` WHERE ${frag}` : "";
   }
 
   /** Compile a where object into `(fragment, params)`; AOT idents, bound values.
