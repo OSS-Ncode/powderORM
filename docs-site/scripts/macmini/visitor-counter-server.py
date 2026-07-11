@@ -8,15 +8,33 @@ POST /api/visit  body: {"visitor_id": "<client-generated uuid>"}
   추가하고 현재 값을 반환한다. 이미 카운트된 id면 증가 없이 현재 값만 반환.
 GET  /api/visit
   증가 없이 현재 {today, total}만 반환.
+
+공개 인터넷에 노출되는 엔드포인트라 다음을 강제한다:
+  - visitor_id는 UUID 형식만 수용 (임의 문자열로 저장소를 부풀리는 공격 차단)
+  - 요청 본문 1KB 제한, Content-Length 파싱 실패는 400
+  - today/total 고유 ID 수에 상한 — 초과 시 카운터가 포화될 뿐 무한 성장하지 않음
+  - 상태는 메모리에 유지(set, O(1) 조회)하고 변경 시에만 원자적으로 저장
 """
 import json
+import os
+import re
 import threading
-from datetime import date, datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 STATS_PATH = "/Users/server/apps/visitor-counter/stats.json"
 PORT = 3002
 KST = timezone(timedelta(hours=9))
+
+MAX_BODY = 1024
+# 무작위 UUID를 대량 생성하는 공격에 대한 최후 방어선 — 정상 트래픽으로는
+# 도달할 수 없는 값이고, 도달해도 서비스는 죽지 않고 숫자만 멈춘다.
+MAX_TODAY = 100_000
+MAX_TOTAL = 2_000_000
+
+UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 
 lock = threading.Lock()
 
@@ -30,22 +48,44 @@ def load_stats():
         with open(STATS_PATH, encoding="utf-8") as f:
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        data = {"date": today_str(), "today_visitors": [], "total_visitors": []}
-
-    if data.get("date") != today_str():
-        data["date"] = today_str()
-        data["today_visitors"] = []
-
-    return data
+        data = {}
+    return {
+        "date": data.get("date") or today_str(),
+        "today_visitors": set(data.get("today_visitors") or []),
+        "total_visitors": set(data.get("total_visitors") or []),
+    }
 
 
 def save_stats(data):
-    with open(STATS_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    # 임시 파일에 쓴 뒤 os.replace — 쓰는 도중 죽어도 기존 파일이 깨지지 않음
+    tmp = STATS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "date": data["date"],
+                "today_visitors": sorted(data["today_visitors"]),
+                "total_visitors": sorted(data["total_visitors"]),
+            },
+            f,
+            ensure_ascii=False,
+        )
+    os.replace(tmp, STATS_PATH)
 
 
-def counts(data):
-    return {"today": len(data["today_visitors"]), "total": len(data["total_visitors"])}
+# 시작 시 1회 로드 후 메모리에서 운영 (요청마다 디스크를 읽지 않음)
+stats = load_stats()
+
+
+def rollover_if_needed():
+    # lock을 쥔 상태에서 호출
+    if stats["date"] != today_str():
+        stats["date"] = today_str()
+        stats["today_visitors"] = set()
+        save_stats(stats)
+
+
+def counts():
+    return {"today": len(stats["today_visitors"]), "total": len(stats["total_visitors"])}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -70,31 +110,52 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "not found"}, 404)
             return
         with lock:
-            data = load_stats()
-        self._send_json(counts(data))
+            rollover_if_needed()
+            result = counts()
+        self._send_json(result)
 
     def do_POST(self):
         if self.path.rstrip("/") != "/api/visit":
             self._send_json({"error": "not found"}, 404)
             return
 
-        length = int(self.headers.get("Content-Length", 0))
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._send_json({"error": "bad request"}, 400)
+            return
+        if length < 0 or length > MAX_BODY:
+            self._send_json({"error": "payload too large"}, 413)
+            return
+
         raw = self.rfile.read(length) if length else b"{}"
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
             payload = {}
-        visitor_id = str(payload.get("visitor_id") or "").strip()
+        visitor_id = str(payload.get("visitor_id") or "").strip().lower()
+        if not UUID_RE.fullmatch(visitor_id):
+            visitor_id = ""  # 형식이 아니면 카운트하지 않고 현재 값만 반환
 
         with lock:
-            data = load_stats()
+            rollover_if_needed()
             if visitor_id:
-                if visitor_id not in data["today_visitors"]:
-                    data["today_visitors"].append(visitor_id)
-                if visitor_id not in data["total_visitors"]:
-                    data["total_visitors"].append(visitor_id)
-                save_stats(data)
-            result = counts(data)
+                changed = False
+                if (
+                    visitor_id not in stats["today_visitors"]
+                    and len(stats["today_visitors"]) < MAX_TODAY
+                ):
+                    stats["today_visitors"].add(visitor_id)
+                    changed = True
+                if (
+                    visitor_id not in stats["total_visitors"]
+                    and len(stats["total_visitors"]) < MAX_TOTAL
+                ):
+                    stats["total_visitors"].add(visitor_id)
+                    changed = True
+                if changed:
+                    save_stats(stats)
+            result = counts()
 
         self._send_json(result)
 

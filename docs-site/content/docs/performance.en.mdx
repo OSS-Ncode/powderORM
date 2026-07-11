@@ -9,16 +9,6 @@ reader builds a zero-copy view over that buffer.
 
 <BenchmarkExplorer locale="en" />
 
-## Measured (sort, 50,000 rows × 5, median ms)
-
-| runtime | Powder | raw driver | typical ORM |
-|---|---|---|---|
-| Rust | **2.84** | rusqlite 3.94 | Diesel 8.75 |
-| TS/JS | **2.91** | better-sqlite3 11.20 | Prisma 24.57 |
-| Java | **3.98** | JDBC 17.20 | ORMLite 25.07 |
-| Go | **4.08** | database/sql 29.46 | GORM 50.56 |
-| Python | **4.23** | sqlite3 23.07 | Peewee 67.90 |
-
 In all five tabs it's **faster than that language's raw SQL driver.** Every
 runner uses the same data and the same SQL, and must pass a row-count +
 checksum cross-check.

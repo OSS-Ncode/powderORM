@@ -1,30 +1,60 @@
 ---
 title: CLI reference
-description: powder new · init · generate · migrate · validate · seed · ddl
+description: setup · migrate · query · dump · introspect · studio · ai — from schema to dashboard
 ---
 
 ```text
-powder new <dir>       scaffold a new project (create-powder-app)
-powder init            create powder.schema.json + editor JSON Schema
-powder generate        generate AOT typed models (--ts / --py)
-powder ddl             print CREATE TABLE (--dialect sqlite|postgres|mysql)
-powder migrate --db    create tables / add columns (additive; --rebuild for destructive)
-powder validate --db   detect schema↔DB drift — exit 1 on mismatch (build gate)
-powder seed --db       load .json / .sql seeds
+Project
+  powder new <dir>       scaffold a new project (create-powder-app)
+  powder init            create powder.schema.json + editor JSON Schema
+  powder setup           pick-and-install language/DB/AI plugins → powder.config.json
+  powder generate        generate AOT typed models (--ts / --py)
+
+Schema · migrations
+  powder ddl             print CREATE TABLE (--dialect sqlite|postgres|mysql|mssql)
+  powder migrate --db    create tables / add columns (additive; --rebuild destructive, --dry-run plan only)
+  powder validate --db   detect schema↔DB drift — exit 1 on mismatch (build gate)
+  powder seed --db       load .json / .sql seeds
+  powder introspect --db reverse-generate powder.schema.json from a live DB (--loose)
+
+Live data
+  powder query --db      run SELECT → table/JSON/CSV (--format)
+  powder exec --db       run INSERT/UPDATE/DDL → affected row count
+  powder tables --db     list tables
+  powder describe --db   table columns · PK · FK
+  powder dump --db       export data (JSON that powder seed can re-ingest)
+
+Dashboard · AI
+  powder studio --db     web dashboard (mobile-friendly, token-based invite sharing)
+  powder ai "task"       natural language → SQL generation (--run to execute immediately)
 ```
 
-DB URL: `sqlite::memory:` · `sqlite://path` · a path ·
-`postgres://user:pass@host/db` · `mysql://user:pass@host/db`
+The DB URL is the same as in every binding: `sqlite::memory:` · `sqlite://path` · a path ·
+`postgres://` (including CockroachDB) · `mysql://` · `mssql://` · `libsql://`
+
+## setup — pick and install
+
+```bash
+powder setup                       # interactive: DB → languages → AI endpoint
+powder setup --db sqlite://app.db --langs ts,python
+powder setup --add kotlin          # add a language you skipped the first time
+powder setup --show                # inspect the current configuration
+```
+
+For the selected languages that have codegen (ts/python), model files are
+generated immediately; for the rest, install instructions for that binding are
+printed. The result is saved to `powder.config.json`, which studio/ai share.
 
 ## migrate
 
-Reads current state via backend introspection (SQLite PRAGMA / Postgres
-pg_catalog / MySQL information_schema) and applies **only that dialect's DDL**.
-If it already matches, you get `database already up to date`.
+Reads current state via backend-specific introspection (SQLite PRAGMA /
+Postgres pg_catalog / MySQL·MSSQL information_schema) and applies **only that
+dialect's DDL**. If it already matches, you get `database already up to date`.
 
-`--rebuild` (SQLite only): resolves destructive drift — dropped columns, type
-changes — with the official rebuild pattern. Data in surviving columns is
-preserved.
+- `--dry-run`: prints the DDL that would be applied without executing it (`would apply: ...`)
+- `--rebuild` (SQLite only): resolves destructive drift — dropped columns, type
+  changes — with the official rebuild pattern. Data in surviving columns is
+  preserved.
 
 ## validate = build gate
 
@@ -34,16 +64,66 @@ powder validate --db app.db && tsc
 
 It checks column existence / type / NULL / primary-key order (including
 composite) / foreign keys (including composite) / extra columns, and fails with
-a list on any mismatch. Put it in CI and schema drift gets caught before it
-becomes a runtime error.
+a list on any mismatch.
+
+## query · exec · dump · introspect
+
+The live commands all use **the engine client as-is** — shared across all six
+backends, with the SQL injection guard (stacked statements rejected) included.
+
+```bash
+powder query --db app.db "SELECT name, score FROM users" --format csv
+powder exec  --db app.db "UPDATE users SET active = 1 WHERE id = 3"
+powder dump  --db app.db --out seed.json      # exported in FK order
+powder introspect --db postgres://... --out powder.schema.json
+```
+
+`dump` writes JSON that `powder seed` can read back verbatim, in parent-table-first
+(FK topological) order. `introspect` reverse-generates a schema file from an
+existing DB — unmappable types fail honestly, and `--loose` coerces them to
+`text`.
+
+## studio — web dashboard
+
+```bash
+powder studio --db app.db                 # http://127.0.0.1:5877/?t=<token>
+powder studio --db postgres://... --host 0.0.0.0 --readonly
+```
+
+A responsive dashboard offering table browsing, row editing, and a SQL runner
+in the spirit of Drizzle/Prisma Studio — it works as-is in a phone browser too
+(drawer sidebar, touch targets). Connect via the **admin token** URL printed at
+startup; the admin can issue **invite links** (read-only / read-write) from the
+UI to let in exactly whom they want. For internet sharing, use `--host 0.0.0.0`
+plus port forwarding/a tunnel.
+
+- All values are bound parameters, identifiers are checked against the live catalog — editing is safe too
+- `--readonly`: makes the whole server read-only
+- If an AI plugin is configured, the **AI ✨ tab** lets you generate SQL from
+  natural language and run it while inspecting the results
+
+## ai — natural language → SQL
+
+```bash
+powder setup --ai-endpoint http://dgx-spark:8000/v1 --ai-model qwen3.5-35b-a3b
+powder ai "top 10 customers by revenue from last month's completed orders" --db app.db
+powder ai "number of active users" --db app.db --run
+```
+
+It feeds a schema summary as context to an OpenAI-compatible endpoint
+(vLLM/sglang and the like) and generates a **single SQL statement**. Execution
+always goes through the engine, so the stacked-statement guard is the last line
+of defense. Studio's AI tab shares the same endpoint; concurrent requests are
+served up to `maxConcurrent` (default 50) — the overflow is handled by a
+**first-come, first-served queue**.
 
 ## Types by dialect
 
-| schema | sqlite | postgres | mysql |
-|---|---|---|---|
-| int | INTEGER | BIGINT | BIGINT |
-| float | REAL | DOUBLE PRECISION | DOUBLE |
-| text | TEXT | TEXT | TEXT / VARCHAR(255)* |
-| bool | INTEGER | BOOLEAN | TINYINT(1) |
+| schema | sqlite/libsql | postgres | mysql | mssql |
+|---|---|---|---|---|
+| int | INTEGER | BIGINT | BIGINT | BIGINT |
+| float | REAL | DOUBLE PRECISION | DOUBLE | FLOAT |
+| text | TEXT | TEXT | TEXT / VARCHAR(255)* | NVARCHAR(400) |
+| bool | INTEGER | BOOLEAN | TINYINT(1) | BIT |
 
 *MySQL renders a `text` key member as VARCHAR(255) (a bare TEXT can't be indexed).

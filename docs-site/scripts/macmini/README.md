@@ -31,8 +31,34 @@ Windows (P:\oss-Ncode) ──저장──▶ NAS (\\100.123.184.127\Ncode)
 | (기존) `com.powder.docs-site*.plist` | `/Library/LaunchDaemons/` | serve 데몬 + watch 데몬 |
 | `commit-feed-append.py` | `/Users/server/apps/` | 커밋 1개를 받아 Ollama로 언어별 요약 후 feed.json에 append (이번에 추가) |
 | `commit-feed-backfill.py` | `/Users/server/apps/` | 최초 1회 실행용 — 최근 50개 커밋 백필 (이번에 추가) |
-| `visitor-counter-server.py` | `/Users/server/apps/` | 고유 방문자 카운터(포트 3002), `/api/visit` GET·POST (이번에 추가) |
+| `visitor-counter-server.py` | `/Users/server/apps/` | 고유 방문자 카운터(포트 3002), `/api/visit` GET·POST (이번에 추가). 공개 노출이라 보안 강화됨(2026-07-11): visitor_id는 UUID 형식만 수용, 본문 1KB 제한, today 10만/total 200만 상한(초과 시 포화), 상태는 메모리 set으로 유지·변경 시에만 원자적 저장(tmp+rename) |
 | `com.powder.visitor-counter.plist` | `~/Library/LaunchAgents/` | 위 서버를 로그인 시 자동 실행 (이번에 추가) |
+| `bench-publish.py` | `/Users/server/apps/` | DGX Spark가 SSH로 호출 — `bench-results.json`을 읽어 performance.mdx 4개 로케일의 TS/JS·Python 행과 "마지막 자동 측정" 줄만 갱신 (이번에 추가) |
+
+## 벤치마크 자동화 (DGX Spark → 맥미니)
+
+한 달에 한 번 DGX Spark가 bench-site의 5개 언어 탭(TS/JS·Python·Rust·
+Java·Go) 벤치마크를 전부 재실행해 `performance.mdx` 숫자를 자동
+갱신한다 (2026-07-11부로 5개 언어 전체 자동화 완료 — Go/JDK 툴체인을
+DGX에 설치하고 rust-bench/go-bench/java-bench를 빌드함). 자세한 흐름은
+`../dgx/README.md` 참고.
+
+- DGX → 맥미니 결과 전송: `scp` (`~/.ssh/id_ed25519_macmini`, DGX 전용
+  키 — 위 loopback 키와는 다른 파일이며 맥미니 `authorized_keys`에 별도
+  등록됨)
+- 맥미니 쪽 수신 파일: `/Users/server/apps/bench-results.json` (매번 덮어씀,
+  기록용 아님)
+- 갱신 대상: `/Volumes/Ncode/oss-Ncode/docs-site/content/docs/performance{,.en,.zh,.ja}.mdx`
+  (NAS 마운트 = Windows P: 드라이브와 동일 파일) — 정규식으로 5개 언어 행
+  숫자만 치환, 나머지 본문은 그대로 둠
+- "마지막 자동 측정" 줄은 정적 표 아래가 아니라 상단 `<BenchmarkExplorer
+  />` 막대그래프 바로 밑에 삽입됨 (표 아래에 두면 눈에 덜 띈다는 피드백
+  반영, 2026-07-11)
+- 마커는 MDX가 허용하는 `{/* bench:auto */}` 형식만 써야 함 — HTML 주석
+  `<!-- -->`를 썼다가 `next build`가 "Unexpected character `!`"로 실패한
+  적 있음 (fumadocs-mdx가 MDX/JSX로 파싱하기 때문)
+- 멱등: 마커로 "마지막 자동 측정" 줄을 찾아 교체 — 재실행해도 줄이
+  중복되지 않음
 
 ## 방문자 카운터 라우팅 (Cloudflare)
 

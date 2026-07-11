@@ -1,29 +1,59 @@
 ---
 title: CLIリファレンス
-description: powder new · init · generate · migrate · validate · seed · ddl
+description: setup · migrate · query · dump · introspect · studio · ai — スキーマからダッシュボードまで
 ---
 
 ```text
-powder new <dir>       新規プロジェクトのスキャフォールディング（create-powder-app）
-powder init            powder.schema.json + エディタ用JSON Schemaを生成
-powder generate        AOT typedモデルを生成（--ts / --py）
-powder ddl             CREATE TABLEを出力（--dialect sqlite|postgres|mysql）
-powder migrate --db    テーブル作成/カラム追加（加算的; --rebuildで破壊的変更）
-powder validate --db   スキーマ↔DBのドリフトを検出 — 不一致ならexit 1（ビルドゲート）
-powder seed --db       .json / .sql シードを投入
+プロジェクト
+  powder new <dir>       新規プロジェクトのスキャフォールディング（create-powder-app）
+  powder init            powder.schema.json + エディタ用JSON Schemaを生成
+  powder setup           言語・DB・AIプラグインを選択インストール → powder.config.json
+  powder generate        AOT typedモデルを生成（--ts / --py）
+
+スキーマ · マイグレーション
+  powder ddl             CREATE TABLEを出力（--dialect sqlite|postgres|mysql|mssql）
+  powder migrate --db    テーブル作成/カラム追加（加算的; --rebuildは破壊的、--dry-runは計画のみ）
+  powder validate --db   スキーマ↔DBのドリフトを検出 — 不一致ならexit 1（ビルドゲート）
+  powder seed --db       .json / .sql シードを投入
+  powder introspect --db 稼働中のDB → powder.schema.jsonを逆生成（--loose）
+
+ライブデータ
+  powder query --db      SELECTを実行 → 表/JSON/CSV（--format）
+  powder exec --db       INSERT/UPDATE/DDLを実行 → 適用行数
+  powder tables --db     テーブル一覧
+  powder describe --db   テーブルのカラム・PK・FK
+  powder dump --db       データをエクスポート（powder seedで再投入可能なJSON）
+
+ダッシュボード · AI
+  powder studio --db     Webダッシュボード（モバイル対応、トークン招待で共有）
+  powder ai "タスク"      自然言語 → SQL生成（--runで即時実行）
 ```
 
-DB URL: `sqlite::memory:` · `sqlite://path` · パス ·
-`postgres://user:pass@host/db` · `mysql://user:pass@host/db`
+DB URLはすべてのバインディングと共通: `sqlite::memory:` · `sqlite://path` · パス ·
+`postgres://`（CockroachDBを含む） · `mysql://` · `mssql://` · `libsql://`
+
+## setup — 選択インストール
+
+```bash
+powder setup                       # 対話形式: DB → 言語 → AIエンドポイント
+powder setup --db sqlite://app.db --langs ts,python
+powder setup --add kotlin          # 最初に選ばなかった言語を後から追加
+powder setup --show                # 現在の設定を確認
+```
+
+選択した言語のうちコード生成がある言語（ts/python）はその場でモデルファイル
+が生成され、それ以外は該当バインディングのインストール手順が表示されます。
+結果は`powder.config.json`に保存され、studio/aiが共有して使用します。
 
 ## migrate
 
 バックエンドごとのintrospection（SQLite PRAGMA / Postgres pg_catalog /
-MySQL information_schema）で現在の状態を読み取り、**その方言のDDLのみ**を
-適用します。すでに一致していれば`database already up to date`です。
+MySQL・MSSQL information_schema）で現在の状態を読み取り、**その方言のDDL
+のみ**を適用します。すでに一致していれば`database already up to date`です。
 
-`--rebuild`（SQLite専用）: カラム削除・型変更のような破壊的ドリフトを、
-公式の再構築パターンで解消します。残存するカラムのデータは保持されます。
+- `--dry-run`: 実行せず、適用されるDDLだけを出力（`would apply: ...`）
+- `--rebuild`（SQLite専用）: カラム削除・型変更のような破壊的ドリフトを
+  公式の再構築パターンで解消します。残存するカラムのデータは保持されます。
 
 ## validate = ビルドゲート
 
@@ -32,17 +62,66 @@ powder validate --db app.db && tsc
 ```
 
 カラムの存在/型/NULL/主キーの順序（複合含む）/外部キー（複合含む）/
-余分なカラムを照合し、不一致があれば一覧とともに失敗します。CIに組み込む
-ことで、スキーマのドリフトがランタイムエラーになる前に検出できます。
+余分なカラムを照合し、不一致があれば一覧とともに失敗します。
+
+## query · exec · dump · introspect
+
+ライブ系コマンドはすべて**エンジンクライアントをそのまま**使用します —
+6バックエンド共通で、SQLインジェクションガード（スタック文の拒否）付きです。
+
+```bash
+powder query --db app.db "SELECT name, score FROM users" --format csv
+powder exec  --db app.db "UPDATE users SET active = 1 WHERE id = 3"
+powder dump  --db app.db --out seed.json      # FK順に整列してエクスポート
+powder introspect --db postgres://... --out powder.schema.json
+```
+
+`dump`は`powder seed`がそのまま再読込できるJSONを、親テーブル優先
+（FKトポロジカルソート）の順序で書き出します。`introspect`は既存のDBから
+スキーマファイルを逆生成します — マッピングできない型は正直に失敗し、
+`--loose`を指定すると`text`に強制します。
+
+## studio — Webダッシュボード
+
+```bash
+powder studio --db app.db                 # http://127.0.0.1:5877/?t=<トークン>
+powder studio --db postgres://... --host 0.0.0.0 --readonly
+```
+
+Drizzle/Prisma Studioのようにテーブル閲覧・行編集・SQLランナーを備えた
+レスポンシブなダッシュボードです — スマートフォンのブラウザでもそのまま
+動作します（ドロワーサイドバー、タッチターゲット）。起動時に表示される
+**管理者トークン**のURLで接続し、管理者はUIから**招待リンク**
+（読み取り専用 / 読み書き）を発行して、入れたい相手だけを招き入れられます。
+インターネット共有は`--host 0.0.0.0` + ポートフォワーディング/トンネルで。
+
+- 値はすべてバインドパラメータ、識別子はライブカタログと照合 — 編集も安全
+- `--readonly`: サーバー全体を読み取り専用に
+- AIプラグインが設定されていれば、**AI ✨ タブ**で自然言語からSQLを生成し、
+  結果を確認しながら実行できます
+
+## ai — 自然言語 → SQL
+
+```bash
+powder setup --ai-endpoint http://dgx-spark:8000/v1 --ai-model qwen3.5-35b-a3b
+powder ai "先月の決済完了注文について顧客別売上トップ10" --db app.db
+powder ai "アクティブユーザー数" --db app.db --run
+```
+
+OpenAI互換エンドポイント（vLLM/sglangなど）にスキーマ要約をコンテキスト
+として渡し、**単一のSQL文**を生成します。実行は常にエンジンを経由するため、
+スタック文ガードが最後の防御線になります。studioのAIタブも同じ
+エンドポイントを共有し、同時リクエストは`maxConcurrent`（デフォルト50）
+まで — 超過分は**先着順の待機キュー**で処理されます。
 
 ## 方言別の型
 
-| スキーマ | sqlite | postgres | mysql |
-|---|---|---|---|
-| int | INTEGER | BIGINT | BIGINT |
-| float | REAL | DOUBLE PRECISION | DOUBLE |
-| text | TEXT | TEXT | TEXT / VARCHAR(255)* |
-| bool | INTEGER | BOOLEAN | TINYINT(1) |
+| スキーマ | sqlite/libsql | postgres | mysql | mssql |
+|---|---|---|---|---|
+| int | INTEGER | BIGINT | BIGINT | BIGINT |
+| float | REAL | DOUBLE PRECISION | DOUBLE | FLOAT |
+| text | TEXT | TEXT | TEXT / VARCHAR(255)* | NVARCHAR(400) |
+| bool | INTEGER | BOOLEAN | TINYINT(1) | BIT |
 
 *MySQLはキーメンバーのtextをVARCHAR(255)としてレンダリングします（bareな
 TEXTはインデックス不可のため）。

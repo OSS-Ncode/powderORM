@@ -9,16 +9,6 @@ Powder는 쿼리 결과를 행 단위로 FFI 경계를 넘기지 않습니다. R
 
 <BenchmarkExplorer locale="ko" />
 
-## 실측 (sort, 50,000행 × 5회, 중앙값 ms)
-
-| 런타임 | Powder | raw 드라이버 | 대표 ORM |
-|---|---|---|---|
-| Rust | **2.84** | rusqlite 3.94 | Diesel 8.75 |
-| TS/JS | **2.91** | better-sqlite3 11.20 | Prisma 24.57 |
-| Java | **3.98** | JDBC 17.20 | ORMLite 25.07 |
-| Go | **4.08** | database/sql 29.46 | GORM 50.56 |
-| Python | **4.23** | sqlite3 23.07 | Peewee 67.90 |
-
 5개 탭 전부에서 **그 언어의 raw SQL 드라이버보다 빠릅니다.** 모든 러너는
 같은 데이터·같은 SQL로 실행되고 행 수+체크섬 교차 검증을 통과해야 합니다.
 

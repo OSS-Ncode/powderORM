@@ -1,29 +1,59 @@
 ---
 title: CLI 参考
-description: powder new · init · generate · migrate · validate · seed · ddl
+description: setup · migrate · query · dump · introspect · studio · ai —— 从 schema 到仪表盘
 ---
 
 ```text
-powder new <dir>       生成新项目脚手架（create-powder-app）
-powder init            生成 powder.schema.json + 编辑器用 JSON Schema
-powder generate        生成 AOT typed 模型（--ts / --py）
-powder ddl             输出 CREATE TABLE 语句（--dialect sqlite|postgres|mysql）
-powder migrate --db    创建表/新增列（增量式；--rebuild 支持破坏性变更）
-powder validate --db   检测 schema↔数据库 漂移 —— 不一致时以 exit 1 退出（构建门禁）
-powder seed --db       加载 .json / .sql 种子数据
+项目
+  powder new <dir>       生成新项目脚手架（create-powder-app）
+  powder init            生成 powder.schema.json + 编辑器用 JSON Schema
+  powder setup           按需选装语言/数据库/AI 插件 → powder.config.json
+  powder generate        生成 AOT typed 模型（--ts / --py）
+
+Schema · 迁移
+  powder ddl             输出 CREATE TABLE 语句（--dialect sqlite|postgres|mysql|mssql）
+  powder migrate --db    创建表/新增列（增量式；--rebuild 为破坏性，--dry-run 只输出计划）
+  powder validate --db   检测 schema↔数据库 漂移 —— 不一致时以 exit 1 退出（构建门禁）
+  powder seed --db       加载 .json / .sql 种子数据
+  powder introspect --db 从运行中的数据库反向生成 powder.schema.json（--loose）
+
+实时数据
+  powder query --db      执行 SELECT → 表格/JSON/CSV（--format）
+  powder exec --db       执行 INSERT/UPDATE/DDL → 返回受影响行数
+  powder tables --db     列出所有表
+  powder describe --db   查看表的列·主键·外键
+  powder dump --db       导出数据（可由 powder seed 重新导入的 JSON）
+
+仪表盘 · AI
+  powder studio --db     Web 仪表盘（适配移动端，通过令牌邀请共享）
+  powder ai "任务"        自然语言 → 生成 SQL（--run 立即执行）
 ```
 
-数据库 URL：`sqlite::memory:` · `sqlite://path` · 文件路径 ·
-`postgres://user:pass@host/db` · `mysql://user:pass@host/db`
+数据库 URL 与所有语言绑定完全一致：`sqlite::memory:` · `sqlite://path` · 文件路径 ·
+`postgres://`（含 CockroachDB） · `mysql://` · `mssql://` · `libsql://`
+
+## setup —— 按需选装
+
+```bash
+powder setup                       # 交互式：数据库 → 语言 → AI 端点
+powder setup --db sqlite://app.db --langs ts,python
+powder setup --add kotlin          # 之后再补装当初没选的语言
+powder setup --show                # 查看当前配置
+```
+
+所选语言中支持代码生成的（ts/python）会立即生成模型文件，其余语言则会
+输出对应绑定的安装指引。结果保存在 `powder.config.json` 中，供 studio/ai
+共同使用。
 
 ## migrate
 
 通过各后端专属的内省机制（SQLite 的 PRAGMA / Postgres 的 pg_catalog /
-MySQL 的 information_schema）读取当前状态，只应用**该方言对应的** DDL。
-如果已经一致，则显示 `database already up to date`。
+MySQL·MSSQL 的 information_schema）读取当前状态，只应用**该方言对应的**
+DDL。如果已经一致，则显示 `database already up to date`。
 
-`--rebuild`（仅限 SQLite）：通过官方的重建（rebuild）模式，解决删除列、
-修改类型等破坏性漂移问题。保留下来的列的数据会被完整保存。
+- `--dry-run`：不执行，只输出将要应用的 DDL（`would apply: ...`）
+- `--rebuild`（仅限 SQLite）：通过官方的重建（rebuild）模式，解决删除列、
+  修改类型等破坏性漂移问题。保留下来的列的数据会被完整保存。
 
 ## validate = 构建门禁
 
@@ -32,16 +62,62 @@ powder validate --db app.db && tsc
 ```
 
 会对列的存在性/类型/是否可为空/主键顺序（含复合主键）/外键（含复合外键）/
-多余列进行比对，一旦发现不一致，会列出清单并失败退出。将其接入 CI，
-即可在 schema 漂移演变为运行时错误之前拦截它。
+多余列进行比对，一旦发现不一致，会列出清单并失败退出。
+
+## query · exec · dump · introspect
+
+所有实时命令都**直接复用引擎客户端** —— 6 个后端通用，并自带 SQL 注入
+防护（拒绝堆叠语句）。
+
+```bash
+powder query --db app.db "SELECT name, score FROM users" --format csv
+powder exec  --db app.db "UPDATE users SET active = 1 WHERE id = 3"
+powder dump  --db app.db --out seed.json      # 按外键顺序排序后导出
+powder introspect --db postgres://... --out powder.schema.json
+```
+
+`dump` 会以父表优先（外键拓扑排序）的顺序写出 JSON，`powder seed` 可以
+原样读回。`introspect` 会从现有数据库反向生成 schema 文件 —— 无法映射的
+类型会如实报错失败，指定 `--loose` 则强制映射为 `text`。
+
+## studio —— Web 仪表盘
+
+```bash
+powder studio --db app.db                 # http://127.0.0.1:5877/?t=<令牌>
+powder studio --db postgres://... --host 0.0.0.0 --readonly
+```
+
+这是一个类似 Drizzle/Prisma Studio 的响应式仪表盘，提供表浏览、行编辑和
+SQL 运行器 —— 在手机浏览器中也能直接使用（抽屉式侧边栏、触控目标）。
+通过启动时输出的**管理员令牌** URL 访问；管理员可在 UI 中签发**邀请链接**
+（只读 / 读写），精确控制谁能进入。要在互联网上共享，请使用
+`--host 0.0.0.0` 加端口转发/隧道。
+
+- 所有值均为绑定参数，标识符与实时目录（catalog）比对 —— 编辑操作同样安全
+- `--readonly`：将整个服务器设为只读
+- 若已配置 AI 插件，可在 **AI ✨ 标签页**中用自然语言生成 SQL，
+  边查看结果边执行
+
+## ai —— 自然语言 → SQL
+
+```bash
+powder setup --ai-endpoint http://dgx-spark:8000/v1 --ai-model qwen3.5-35b-a3b
+powder ai "上个月已完成支付订单中按客户统计的营收前 10 名" --db app.db
+powder ai "活跃用户数" --db app.db --run
+```
+
+将 schema 摘要作为上下文发送到 OpenAI 兼容端点（vLLM/sglang 等），生成
+**单条 SQL 语句**。执行始终经过引擎，因此堆叠语句防护是最后一道防线。
+studio 的 AI 标签页共享同一端点，并发请求最多 `maxConcurrent`（默认 50）
+个 —— 超出部分进入**先到先得的等待队列**处理。
 
 ## 各方言的类型映射
 
-| schema | sqlite | postgres | mysql |
-|---|---|---|---|
-| int | INTEGER | BIGINT | BIGINT |
-| float | REAL | DOUBLE PRECISION | DOUBLE |
-| text | TEXT | TEXT | TEXT / VARCHAR(255)* |
-| bool | INTEGER | BOOLEAN | TINYINT(1) |
+| schema | sqlite/libsql | postgres | mysql | mssql |
+|---|---|---|---|---|
+| int | INTEGER | BIGINT | BIGINT | BIGINT |
+| float | REAL | DOUBLE PRECISION | DOUBLE | FLOAT |
+| text | TEXT | TEXT | TEXT / VARCHAR(255)* | NVARCHAR(400) |
+| bool | INTEGER | BOOLEAN | TINYINT(1) | BIT |
 
 *MySQL 会将作为键成员的 text 渲染为 VARCHAR(255)（因为裸 TEXT 无法建索引）。

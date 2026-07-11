@@ -9,16 +9,6 @@ Powder 不会逐行跨越 FFI 边界传递查询结果。Rust 核心将整个结
 
 <BenchmarkExplorer locale="zh" />
 
-## 实测数据（sort，50,000 行 × 5 次，中位数 ms）
-
-| 运行时 | Powder | 原生驱动 | 代表性 ORM |
-|---|---|---|---|
-| Rust | **2.84** | rusqlite 3.94 | Diesel 8.75 |
-| TS/JS | **2.91** | better-sqlite3 11.20 | Prisma 24.57 |
-| Java | **3.98** | JDBC 17.20 | ORMLite 25.07 |
-| Go | **4.08** | database/sql 29.46 | GORM 50.56 |
-| Python | **4.23** | sqlite3 23.07 | Peewee 67.90 |
-
 在全部五个语言标签页中，**都比该语言的原生 SQL 驱动更快。**所有运行器
 均使用相同的数据、相同的 SQL 执行，并且必须通过行数 + 校验和的交叉验证。
 
