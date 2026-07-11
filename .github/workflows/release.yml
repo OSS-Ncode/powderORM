@@ -115,7 +115,10 @@ jobs:
           - { host: macos-latest, target: aarch64-apple-darwin }
           - { host: macos-15-intel, target: x86_64-apple-darwin }
           - { host: windows-latest, target: x86_64-pc-windows-msvc }
-          - { host: windows-11-arm, target: aarch64-pc-windows-msvc }
+          # win-arm64 excluded: @napi-rs/cli 2.18.4's artifact/prepublish step
+          # doesn't handle this triple yet ("No dist dir found"). The native
+          # library itself still ships in the GitHub Release (native-libs job);
+          # only the npm auto-install prebuild is missing for this platform.
           - { host: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { host: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
           - { host: ubuntu-latest, target: x86_64-unknown-linux-musl }

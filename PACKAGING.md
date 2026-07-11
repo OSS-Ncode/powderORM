@@ -35,12 +35,12 @@ secrets — no workflow edits needed.
 
 | Registry | Package | Enable with | Auth |
 |---|---|---|---|
-| crates.io | `powder-core`, `powder-cli` | `ENABLE_PUBLISH=true` | **OIDC** (no secret) |
-| npm | `@powder/node` (+ platform pkgs) | `ENABLE_PUBLISH=true` | **OIDC** (no secret) |
-| PyPI | `powder` | `ENABLE_PUBLISH=true` | **OIDC** (no secret) |
-| NuGet | `Powder` | `ENABLE_NUGET=true` | **OIDC** + variable `NUGET_USER` |
+| crates.io | `powder-orm`, `powder-orm-cli`, `powder-orm-studio` | `ENABLE_PUBLISH=true` | **OIDC** (no secret) |
+| npm | `powder-orm` (+ platform pkgs) | `ENABLE_PUBLISH=true` | **OIDC** (no secret) |
+| PyPI | `powder-orm` | `ENABLE_PUBLISH=true` | **OIDC** (no secret) |
+| NuGet | `PowderORM` | `ENABLE_NUGET=true` | **OIDC** + variable `NUGET_USER` |
 | Maven Central | `io.github.oss-ncode:powder-java`, `:powder-kotlin` | `ENABLE_MAVEN=true` | secrets `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `MAVEN_SIGNING_KEY`, `MAVEN_SIGNING_PASSWORD` |
-| Go modules | `github.com/OSS-Ncode/powderORM/bindings/go` | — (tag only) | see below |
+| Go modules | `github.com/OSS-Ncode/powder-orm/bindings/go` | — (tag only) | see below |
 
 Four registries use **OIDC Trusted Publishing** — the job requests
 `id-token: write` and the registry returns a short-lived credential, so there's no
@@ -49,19 +49,24 @@ matching this repo + `release.yml`:
 
 - **crates.io** (`rust-lang/crates-io-auth-action` exchanges the token): crates.io
   → each crate → Settings → *Trusted Publishing* → GitHub, owner `OSS-Ncode`,
-  repo `powderORM`, workflow `release.yml`. Do it for `powder-core` **and**
+  repo `powder-orm`, workflow `release.yml`. Do it for `powder-core` **and**
   `powder-cli`. A brand-new crate needs one initial token publish first, then OIDC.
 - **npm** (job upgrades to npm ≥ 11.5.1 automatically): npmjs.com → the package →
-  Settings → *Trusted Publisher* → GitHub Actions, repo `OSS-Ncode/powderORM`,
+  Settings → *Trusted Publisher* → GitHub Actions, repo `OSS-Ncode/powder-orm`,
   workflow `release.yml`. Do it for `@powder/node` **and each platform package**
   (`@powder/node-*`). Brand-new packages may need one initial token publish before
   a publisher can be attached, then OIDC thereafter. Provenance is automatic.
 - **PyPI**: pypi.org → account → Publishing → *Add a pending publisher* → project
-  `powder`, owner `OSS-Ncode`, repo `powderORM`, workflow `release.yml`,
-  environment `pypi`. Also create a GitHub Environment named `pypi`.
+  `powder-orm`, owner `OSS-Ncode`, repo `powder-orm`, workflow `release.yml`,
+  environment `pypi`. Also create a GitHub Environment named `pypi`. **Repo name
+  is case-/spelling-sensitive** — it must match the current GitHub repo name
+  exactly, or PyPI rejects the OIDC claim with "Non-user identities cannot
+  create new projects."
 - **NuGet**: nuget.org → account → *Trusted Publishing* → policy for this repo +
   `release.yml`, then set repo **variable** `NUGET_USER` to your nuget.org
-  username (`NuGet/login` exchanges the OIDC token for a temporary API key).
+  **login username** (not display name or org name — `NuGet/login` errors with
+  "No matching trust policy owned by user '...'" if these two don't match
+  exactly the account that created the policy).
 
 Only Maven Central still uses stored secrets (no GitHub-OIDC trusted publishing
 flow yet) — see the Maven section below.
@@ -121,7 +126,7 @@ lives in a subdirectory, tag it with the subdir prefix:
 
 ```bash
 git tag bindings/go/v0.1.0 && git push origin bindings/go/v0.1.0
-# consumers: go get github.com/OSS-Ncode/powderORM/bindings/go@v0.1.0
+# consumers: go get github.com/OSS-Ncode/powder-orm/bindings/go@v0.1.0
 ```
 
 The native lib is loaded at runtime via `powder.Load(path)` / `POWDER_LIB`.

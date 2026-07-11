@@ -27,7 +27,8 @@ sourceSets {
 // the sources/javadoc jars, signs, and uploads. Credentials + signing key come
 // from env in CI (see release.yml). Signing only runs when a key is present.
 mavenPublishing {
-    publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL)
+    // vanniktech 0.31+: Central Portal is the only target, so this takes no argument.
+    publishToMavenCentral()
     if (providers.gradleProperty("signingInMemoryKey").isPresent) {
         signAllPublications()
     }
@@ -35,13 +36,13 @@ mavenPublishing {
     pom {
         name.set("powder-orm-java")
         description.set("Java (JNI) binding for the Powder engine — a zero-copy columnar database client with a Rust core.")
-        url.set("https://github.com/OSS-Ncode/powderORM")
+        url.set("https://github.com/OSS-Ncode/powder-orm")
         licenses { license { name.set("MIT"); url.set("https://opensource.org/licenses/MIT") } }
         developers { developer { id.set("oss-ncode"); name.set("Powder team") } }
         scm {
-            url.set("https://github.com/OSS-Ncode/powderORM")
-            connection.set("scm:git:https://github.com/OSS-Ncode/powderORM.git")
-            developerConnection.set("scm:git:ssh://git@github.com/OSS-Ncode/powderORM.git")
+            url.set("https://github.com/OSS-Ncode/powder-orm")
+            connection.set("scm:git:https://github.com/OSS-Ncode/powder-orm.git")
+            developerConnection.set("scm:git:ssh://git@github.com/OSS-Ncode/powder-orm.git")
         }
     }
 }

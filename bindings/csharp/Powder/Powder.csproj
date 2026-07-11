@@ -17,8 +17,8 @@
     <Authors>Powder team</Authors>
     <Description>C# binding for the Powder engine — a zero-copy columnar database client with a Rust core.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/OSS-Ncode/powderORM</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/OSS-Ncode/powderORM</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/OSS-Ncode/powder-orm</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/OSS-Ncode/powder-orm</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>database;sqlite;postgres;mysql;orm;columnar;native</PackageTags>

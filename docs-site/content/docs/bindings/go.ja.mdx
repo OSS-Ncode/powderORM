@@ -20,7 +20,7 @@ cargo build -p powder-ffi --release
 ## 接続 → クエリ
 
 ```go
-import powder "github.com/OSS-Ncode/powderORM/bindings/go"
+import powder "github.com/OSS-Ncode/powder-orm/bindings/go"
 
 if err := powder.Load(os.Getenv("POWDER_LIB")); err != nil { panic(err) }
 

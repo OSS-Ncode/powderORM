@@ -29,7 +29,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Powder team"]
-repository = "https://github.com/OSS-Ncode/powderORM"
+repository = "https://github.com/OSS-Ncode/powder-orm"
 
 [workspace.dependencies]
 powder-core = { package = "powder-orm", path = "crates/powder-core", version = "0.1.0" }
@@ -39,3 +39,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+# Debug symbols would otherwise ship inside every distributed cdylib/wheel/
+# addon (SQLite is compiled in — the symbol payload is large).
+strip = "symbols"
