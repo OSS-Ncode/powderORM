@@ -1,0 +1,67 @@
+---
+title: C++
+description: 헤더 하나로 끝나는 RAII 래퍼 + PCB 디코더
+---
+
+C++ 바인딩은 헤더 하나(`include/powder.hpp`, C++17)예요. C ABI 위에 RAII
+래퍼와 PCB 디코더를 얹어, 메모리 관리를 소멸자에 맡깁니다.
+
+## 사용법
+
+```cpp
+#include "powder.hpp"
+
+powder::Client db("sqlite::memory:");
+db.execute("CREATE TABLE t (id INTEGER, name TEXT, score REAL)");
+db.execute("INSERT INTO t VALUES (?, ?, ?)", {int64_t{1}, "alice", 9.5});
+
+powder::Batch b = db.query("SELECT * FROM t WHERE score >= ?", {5.0});
+for (size_t r = 0; r < b.num_rows(); ++r)
+    std::cout << b["id"].i64(r) << " " << b["name"].str(r) << "\n";
+```
+
+- `Client`·`Batch` 모두 **move-only RAII** — 소멸 시 연결·네이티브 버퍼가
+  자동 해제돼요.
+- 컬럼 읽기는 PCB 버퍼 위의 뷰예요: `i64/f64/boolean/str(row)`,
+  `is_valid(row)`. `str`은 `string_view`라 배치 수명 안에서만 유효합니다.
+- 오류는 전부 `powder::Error`(엔진 메시지 포함)로 던져집니다.
+
+## 트랜잭션
+
+```cpp
+db.transaction([](powder::Client& tx) {
+    tx.execute("INSERT INTO t VALUES (2, 'bob', 1.0)");
+    // 반환 시 COMMIT, 예외 시 ROLLBACK. 중첩은 세이브포인트.
+});
+```
+
+## ORM
+
+C++도 Powder ORM을 완전 지원해요 — 공유 Rust 엔진(`powder_core::orm`) 기반이라
+연산과 문법이 모든 언어에서 동일합니다: `find_many`/`find_first`/`create`/
+`create_many`/`update`/`remove`/`remove_all`/`count`/`exists`/`aggregate`/
+`group_by`(+having), 중첩 `AND`/`OR`/`NOT` where(`eq ne gt gte lt lte like in`),
+`include`(배치 관계 로드), `join`(belongsTo LEFT JOIN). `delete`는 C++ 예약어라
+`remove`/`remove_all`로 노출돼요. 스키마는 `powder.schema.json` 텍스트를
+런타임에 넘기고, 옵션은 JSON 객체 문자열, 행은 JSON 문자열로 옵니다.
+
+```cpp
+powder::Orm orm(db, schema_json);
+auto users = orm.table("users");
+
+users.create(R"({"id":1,"name":"alice","score":9.5,"active":true})");
+
+std::string rows = users.find_many(
+    R"({"where":{"active":true,"score":{"gte":5}},
+        "orderBy":{"score":"desc"},"limit":10})");
+
+users.update(R"({"id":1})", R"({"score":10})");
+users.count(R"({"active":true})");
+```
+
+## 빌드 (Windows / MSVC)
+
+```bat
+cargo build -p powder-ffi --release
+cl /std:c++17 /EHsc /W3 /utf-8 test\test_powder.cpp /link <target>\release\powder_ffi.dll.lib
+```

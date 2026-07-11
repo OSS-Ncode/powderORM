@@ -1,0 +1,78 @@
+---
+title: Java
+description: JNI 바인딩 + 무복사 queryDirect 경로
+---
+
+Java 바인딩은 JNI로 Rust 코어를 호출합니다. 드라이버 + PCB 리더를 제공하고,
+성능이 중요한 경로에는 **완전 무복사** `queryDirect()`가 있어요.
+
+## 준비
+
+```bash
+cargo build -p powder-java --release        # 네이티브 라이브러리
+cd crates/powder-java && javac -d out java/com/powder/*.java
+```
+
+네이티브 라이브러리 위치는 `POWDER_LIB`로 알려주거나 로더 검색 경로에 둡니다.
+
+## 연결 → 쿼리
+
+```java
+try (Client db = Client.connect("sqlite::memory:")) {
+    db.execute("CREATE TABLE t (id INTEGER, name TEXT, score REAL)");
+    db.execute("INSERT INTO t VALUES (?, ?, ?)", 1L, "alice", 9.5);
+
+    Batch b = db.query("SELECT id, name FROM t WHERE score >= ?", 5.0);
+    for (int r = 0; r < b.numRows(); r++)
+        System.out.println(b.column("id").getLong(r) + " " + b.column("name").getString(r));
+}
+```
+
+## 무복사 경로 — `queryDirect`
+
+```java
+try (Batch b = db.queryDirect("SELECT * FROM t")) {   // DirectByteBuffer, 복사 0회
+    long id = b.column("id").getLong(0);
+}   // close()가 네이티브 메모리 해제 — close 후 읽기는 예외 (UAF 방지)
+```
+
+`queryDirect`는 PCB 버퍼를 복사 없이 `DirectByteBuffer`로 그대로 노출해요.
+대신 `Batch`가 네이티브 메모리를 소유하므로 반드시 `try-with-resources`로
+닫아야 하고, 닫은 뒤 읽으면 예외가 납니다(Use-After-Free 방지).
+
+## 트랜잭션
+
+```java
+db.transaction(tx -> {
+    tx.execute("INSERT INTO t VALUES (2, 'bob', 1.0)");
+    // 반환 시 COMMIT, 예외 시 ROLLBACK. 중첩은 세이브포인트.
+});
+```
+
+## ORM
+
+Java도 Powder ORM을 완전 지원해요 — Rust 코어에 한 번 구현된 공유 엔진
+(`powder_core::orm`)을 쓰므로 연산과 문법이 모든 언어에서 동일합니다:
+`findMany`/`findFirst`/`create`/`createMany`/`update`/`delete`/`deleteAll`/
+`count`/`exists`/`aggregate`/`groupBy`(+having), 중첩 `AND`/`OR`/`NOT` where
+(`eq ne gt gte lt lte like in`), `include`(배치 관계 로드),
+`join`(belongsTo LEFT JOIN). 스키마는 `powder.schema.json` 텍스트를 런타임에
+넘기면 됩니다.
+
+```java
+try (Orm orm = db.orm(schemaJson)) {
+    Orm.Table users = orm.table("users");
+    users.create(Map.of("id", 1, "name", "alice", "score", 9.5, "active", true));
+
+    List<Map<String, Object>> rows = users.findMany(Map.of(
+        "where", Map.of("active", true, "score", Map.of("gte", 5)),
+        "orderBy", Map.of("score", "desc"),
+        "limit", 10));
+}
+```
+
+행은 `List<Map<String, Object>>`로 돌아와요. 다중 컬럼 `orderBy`처럼 키
+순서가 중요하면 `Map.of` 대신 `LinkedHashMap`을 쓰세요.
+
+더 관용적인 쿼리 빌더·where DSL을 원하면 [Kotlin](/ko/docs/bindings/kotlin)
+바인딩이 이 위에 얹혀 있어요.

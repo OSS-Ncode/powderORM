@@ -1,0 +1,45 @@
+---
+title: Aggregations & groupBy
+description: count · sum · avg · groupBy · having
+---
+
+Whole-set scalar aggregates live on the Finder (`sum`/`avg`/`min`/`max`/`count`).
+For per-group aggregates use `groupBy` — it returns plain rows, not the model type.
+
+```ts
+const rows = await db.orders.groupBy({
+  by: ["user_id"],
+  where: { amount: { gt: 0 } },   // the normal WHERE (OR/nested included)
+  count: true,                    // → _count
+  sum: ["amount"],                // → _sum_amount
+  having: { _sum_amount: { gt: 100 } },
+  orderBy: { _sum_amount: "desc" },
+});
+// [{ user_id: 1, _count: 12, _sum_amount: 340.5 }, ...]
+```
+
+- Aliases: `_count`, `_sum_<col>`, `_avg_<col>`, `_min_<col>`, `_max_<col>`.
+- `having` filters on the aggregates (`eq ne gt gte lt lte`). For portability
+  HAVING renders the aggregate *expression* (`SUM("amount") > ?`), not the alias.
+- `orderBy` may sort by an alias or a group column.
+- For anything heavier (window functions, CTEs) use raw `db.query()` or a
+  [named query](/en/docs/orm/queries-transactions).
+
+## Same in every language
+
+Identical aliases and result shape.
+
+```python
+rows = await db.orders.group_by(
+    by=["user_id"], count=True, sum=["amount"],
+    having={"_sum_amount": {"gt": 100}}, order_by={"_sum_amount": "desc"},
+)  # list[dict]
+```
+
+```kotlin
+db.from("orders").groupBy(
+    by = listOf("user_id"), count = true, sum = listOf("amount"),
+    having = mapOf("_sum_amount" to (">" to 100.0)),
+    orderBy = mapOf("_sum_amount" to Order.DESC),
+)  // List<Map<String, Any?>>
+```

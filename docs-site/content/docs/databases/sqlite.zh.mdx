@@ -1,0 +1,44 @@
+---
+title: SQLite
+description: 默认后端 —— 完整支持运行时、迁移、结果缓存
+---
+
+SQLite 是 Powder 的默认后端。无需安装服务器，
+使用单个文件或内存即可直接启动。完整支持迁移和结果缓存。
+
+## 连接
+
+```
+sqlite::memory:     内存（进程生命周期）
+sqlite://./app.db   文件（显式）
+./app.db            文件（仅路径）
+```
+
+## 支持范围
+
+| 功能 | 支持 |
+|---|---|
+| 运行时查询 | ✅ |
+| DDL 生成（`powder ddl --dialect sqlite`） | ✅ |
+| migrate / validate / seed | ✅（含 `--rebuild`） |
+| 结果缓存 | ✅ |
+
+## 结果缓存（仅限 SQLite）
+
+重复的相同读取查询可在结果缓存中以 **0.02～0.03ms** 返回结果。正确性由
+三重机制保障：
+
+- 一旦发生写入，立即全量失效
+- 文件数据库通过监视 `data_version` 检测外部变更
+- 含有非确定性函数（例如 `random()`）的查询会被排除在缓存之外
+
+## 破坏性迁移 —— `--rebuild`
+
+SQLite 无法直接删除列或更改类型。`--rebuild` 通过官方的重建
+模式解决此问题，同时**保留幸存列的数据**。
+
+```bash
+powder migrate --db app.db --rebuild
+```
+
+类型映射：`int → INTEGER`、`float → REAL`、`text → TEXT`、`bool → INTEGER`。

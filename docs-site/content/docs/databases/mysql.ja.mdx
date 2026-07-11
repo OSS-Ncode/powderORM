@@ -1,0 +1,42 @@
+---
+title: MySQL / MariaDB
+description: ランタイム・マイグレーション完全サポート
+---
+
+MySQLとMariaDBはランタイムクエリとマイグレーションを完全にサポートしています。接続
+文字列だけを変えれば、他のバックエンドと同様に動作します。
+
+## 接続
+
+```
+mysql://user:pass@host:3306/dbname
+```
+
+## 型マッピングの注意点
+
+`information_schema` introspectionで現在のスキーマを読み取り、必要なDDLのみを
+適用します。キーに含まれる `text` カラムはインデックス可能にするため**VARCHAR(255)**として
+レンダリングされます(裸の `TEXT` はMySQLではインデックスできません)。
+
+型マッピング: `int → BIGINT`, `float → DOUBLE`, `text → TEXT`(キーメンバーは
+`VARCHAR(255)`), `bool → TINYINT(1)`。
+
+## 結果キャッシュなし
+
+サーバーDBのため他のクライアントの書き込みを検知できず、結果キャッシュはオフになります
+(正確性を優先)。
+
+## DDL / マイグレーション
+
+```bash
+powder ddl --dialect mysql
+powder migrate --db mysql://...
+```
+
+## サーバーで検証
+
+```bash
+POWDER_MYSQL_URL=mysql://... cargo test -p powder-cli
+```
+
+環境変数がない場合はスキップされるため、CIは壊れません。

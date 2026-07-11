@@ -1,0 +1,68 @@
+---
+title: C++
+description: 单头文件搞定的 RAII 封装 + PCB 解码器
+---
+
+C++ 绑定只有一个头文件(`include/powder.hpp`,C++17)。它在 C ABI 之上
+叠加了 RAII 封装和 PCB 解码器,将内存管理交给析构函数处理。
+
+## 用法
+
+```cpp
+#include "powder.hpp"
+
+powder::Client db("sqlite::memory:");
+db.execute("CREATE TABLE t (id INTEGER, name TEXT, score REAL)");
+db.execute("INSERT INTO t VALUES (?, ?, ?)", {int64_t{1}, "alice", 9.5});
+
+powder::Batch b = db.query("SELECT * FROM t WHERE score >= ?", {5.0});
+for (size_t r = 0; r < b.num_rows(); ++r)
+    std::cout << b["id"].i64(r) << " " << b["name"].str(r) << "\n";
+```
+
+- `Client`·`Batch` 都是 **move-only RAII**——销毁时会自动释放连接·
+  原生缓冲区。
+- 读取列是在 PCB 缓冲区上建立视图:`i64/f64/boolean/str(row)`、
+  `is_valid(row)`。`str` 返回的是 `string_view`,只在批次生命周期内有效。
+- 所有错误都以 `powder::Error`(包含引擎消息)抛出。
+
+## 事务
+
+```cpp
+db.transaction([](powder::Client& tx) {
+    tx.execute("INSERT INTO t VALUES (2, 'bob', 1.0)");
+    // 返回时 COMMIT,抛出异常时 ROLLBACK。嵌套则使用保存点。
+});
+```
+
+## ORM
+
+C++ 也完整支持 Powder ORM —— 基于共享 Rust 引擎(`powder_core::orm`),
+运算和语法在所有语言中完全一致:`find_many`/`find_first`/`create`/
+`create_many`/`update`/`remove`/`remove_all`/`count`/`exists`/`aggregate`/
+`group_by`(+having)、嵌套 `AND`/`OR`/`NOT` where(`eq ne gt gte lt lte like in`)、
+`include`(批量关联加载)、`join`(belongsTo LEFT JOIN)。由于 `delete` 是
+C++ 保留字,因此以 `remove`/`remove_all` 的形式暴露。schema 在运行时以
+`powder.schema.json` 文本传入,选项以 JSON 对象字符串传入,行数据以
+JSON 字符串返回。
+
+```cpp
+powder::Orm orm(db, schema_json);
+auto users = orm.table("users");
+
+users.create(R"({"id":1,"name":"alice","score":9.5,"active":true})");
+
+std::string rows = users.find_many(
+    R"({"where":{"active":true,"score":{"gte":5}},
+        "orderBy":{"score":"desc"},"limit":10})");
+
+users.update(R"({"id":1})", R"({"score":10})");
+users.count(R"({"active":true})");
+```
+
+## 构建(Windows / MSVC)
+
+```bat
+cargo build -p powder-ffi --release
+cl /std:c++17 /EHsc /W3 /utf-8 test\test_powder.cpp /link <target>\release\powder_ffi.dll.lib
+```

@@ -1,0 +1,89 @@
+---
+title: Go
+description: C ABI binding (no cgo on Windows)
+---
+
+The Go binding calls the Rust core through the stable C ABI exported by
+`powder-ffi`, and decodes the zero-copy PCB column buffer in pure Go.
+
+- **Windows**: no C toolchain needed — it binds the library via `syscall`, so it
+  builds with `CGO_ENABLED=0`.
+- **Linux / macOS**: it `dlopen`s the shared library via cgo.
+
+## Setup
+
+```bash
+cargo build -p powder-ffi --release
+# -> <target>/release/powder_ffi.{dll,so,dylib}
+```
+
+## Connect → query
+
+```go
+import powder "github.com/OSS-Ncode/powderORM/bindings/go"
+
+if err := powder.Load(os.Getenv("POWDER_LIB")); err != nil { panic(err) }
+
+db, _ := powder.Connect("sqlite::memory:")
+defer db.Close()
+
+db.Exec("CREATE TABLE users (id INTEGER, name TEXT, score REAL)")
+db.Exec("INSERT INTO users VALUES (?,?,?)", 1, "alice", 9.5)
+
+// fluent builder, or raw SQL with bound parameters
+batch, _ := db.Run(
+    powder.Table("users").Select("id", "name").
+        Filter("score >= ?", 5.0).OrderBy("id", "ASC"),
+)
+name := batch.Column("name")
+for r := 0; r < batch.NumRows(); r++ {
+    fmt.Println(name.String(r))
+}
+```
+
+Bound parameters accept Go ints, floats, `string`, `bool`, and `nil`.
+
+## Transactions
+
+```go
+err := db.Transaction(func(tx *powder.Client) error {
+    _, err := tx.Exec("INSERT INTO users VALUES (2, 'bob', 7.0)")
+    return err   // nil → COMMIT, error → ROLLBACK. Nested = savepoint.
+})
+```
+
+## ORM
+
+Go has the full Powder ORM via the shared engine implemented once in the Rust
+core (`powder_core::orm`), so the operations and syntax are identical in every
+language: `FindMany`/`FindFirst`/`Create`/`CreateMany`/`Update`/`Delete`/
+`DeleteAll`/`Count`/`Exists`/`Aggregate`/`GroupBy` (+having), nested
+`AND`/`OR`/`NOT` where (`eq ne gt gte lt lte like in`), `include` (batched
+relation load), and `join` (belongsTo LEFT JOIN). The schema is your
+`powder.schema.json` text, passed at runtime.
+
+```go
+orm, _ := db.Orm(schemaJSON)
+defer orm.Close()
+
+users := orm.Table("users")
+users.Create(powder.M{"id": 1, "name": "alice", "score": 9.5, "active": true})
+
+rows, _ := users.FindMany(powder.M{
+    "where":   powder.M{"active": true, "score": powder.M{"gte": 5}},
+    "orderBy": powder.M{"score": "desc"},
+    "limit":   10,
+})   // []powder.M
+```
+
+`powder.M` is an alias for `map[string]any`, and rows come back as
+`[]powder.M`.
+
+## Good to know
+
+- The PCB payload is **copied once** from native memory into a Go slice and then
+  owned by the GC — Go can't safely hold pointers to foreign allocations, and
+  this is a deliberate safety measure.
+- `Column` reads values directly from the little-endian PCB. `Batch.Rows()` is a
+  convenience (copying) view.
+- `Client` serializes its own calls — the Rust core owns a single connection.

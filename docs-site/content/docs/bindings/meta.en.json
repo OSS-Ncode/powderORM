@@ -1,0 +1,15 @@
+{
+  "title": "Language guides",
+  "pages": [
+    "index",
+    "typescript",
+    "python",
+    "rust",
+    "java",
+    "kotlin",
+    "go",
+    "c",
+    "cpp",
+    "csharp"
+  ]
+}

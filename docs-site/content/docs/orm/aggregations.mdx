@@ -1,0 +1,45 @@
+---
+title: 집계와 groupBy
+description: count · sum · avg · groupBy · having
+---
+
+전체 집합 스칼라 집계는 Finder에 있어요 (`sum`/`avg`/`min`/`max`/`count`).
+그룹별 집계는 `groupBy`를 씁니다 — 반환은 모델이 아니라 평면 행이에요.
+
+```ts
+const rows = await db.orders.groupBy({
+  by: ["user_id"],
+  where: { amount: { gt: 0 } },   // 기존 WHERE (OR/중첩 포함) 그대로
+  count: true,                    // → _count
+  sum: ["amount"],                // → _sum_amount
+  having: { _sum_amount: { gt: 100 } },
+  orderBy: { _sum_amount: "desc" },
+});
+// [{ user_id: 1, _count: 12, _sum_amount: 340.5 }, ...]
+```
+
+- 별칭: `_count`, `_sum_<컬럼>`, `_avg_<컬럼>`, `_min_<컬럼>`, `_max_<컬럼>`.
+- `having`는 집계에 필터를 겁니다 (`eq ne gt gte lt lte`). 이식성을 위해
+  HAVING은 별칭이 아니라 집계 표현식(`SUM("amount") > ?`)으로 렌더됩니다.
+- `orderBy`는 별칭이나 그룹 컬럼으로 정렬해요.
+- 더 복잡한 것(윈도우 함수·CTE)은 raw `db.query()`나
+  [명명 쿼리](/ko/docs/orm/queries-transactions)를 쓰세요.
+
+## 다른 언어에서도 동일
+
+같은 별칭·결과 형태예요.
+
+```python
+rows = await db.orders.group_by(
+    by=["user_id"], count=True, sum=["amount"],
+    having={"_sum_amount": {"gt": 100}}, order_by={"_sum_amount": "desc"},
+)  # list[dict]
+```
+
+```kotlin
+db.from("orders").groupBy(
+    by = listOf("user_id"), count = true, sum = listOf("amount"),
+    having = mapOf("_sum_amount" to (">" to 100.0)),
+    orderBy = mapOf("_sum_amount" to Order.DESC),
+)  // List<Map<String, Any?>>
+```

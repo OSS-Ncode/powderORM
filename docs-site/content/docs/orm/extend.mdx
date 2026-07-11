@@ -1,0 +1,68 @@
+---
+title: 나만의 메서드 ($extend)
+description: db.posts.myMethod() 형태로 커스텀 메서드 붙이기
+---
+
+`createMany` 같은 헬퍼를 직접 만들어 `db.posts.무엇이든()` 형태로 쓰고
+싶다면 `$extend`를 쓰세요. 원본 클라이언트는 바뀌지 않고, 확장된 새
+클라이언트가 반환됩니다.
+
+## TypeScript
+
+```ts
+const xdb = db.$extend({
+  users: {
+    // this = 그 테이블 (내장 API를 그대로 조합)
+    async top(this: PowderTable<Users>, n: number): Promise<Users[]> {
+      return this.orderBy("score", "desc").limit(n).all();
+    },
+    async createManyActive(this: PowderTable<Users>, names: string[]) {
+      return this.createMany(
+        names.map((name, i) => ({ id: 100 + i, name, score: 0, active: true })),
+      );
+    },
+  },
+  posts: {
+    async byUser(this: PowderTable<Posts>, userId: number): Promise<Posts[]> {
+      return this.where({ user_id: userId }).orderBy("id").all();
+    },
+  },
+});
+
+await xdb.users.top(3);          // 커스텀 메서드
+await xdb.users.count();          // 내장 메서드도 그대로
+await xdb.posts.byUser(1);
+```
+
+타입은 완전히 보존됩니다 — `xdb.users`는 `PowderTable<Users> & { top, createManyActive }`.
+
+## 트랜잭션 안에서도
+
+`$transaction` 콜백에 넘어오는 클라이언트에도 같은 확장이 적용됩니다:
+
+```ts
+await xdb.$transaction(async (tx) => {
+  await tx.users.createManyActive(["a", "b"]);
+  const best = await tx.users.top(1);
+});
+```
+
+## Python
+
+```python
+from powder.orm import extend_powder
+
+async def top(self, n):
+    return await self.order_by("score", "desc").limit(n).all()
+
+xdb = extend_powder(db, {"users": {"top": top}})
+await xdb.users.top(3)
+```
+
+## 규칙
+
+- 존재하지 않는 테이블 이름을 확장하면 **즉시 오류**가 납니다 (오타 방지).
+- 메서드 안의 `this`(Python은 `self`)는 확장된 테이블 자신입니다 —
+  내장 메서드와 다른 커스텀 메서드를 자유롭게 조합하세요.
+- 원본 `db`는 변경되지 않으므로, 확장 전 클라이언트를 공유하는 코드는
+  영향을 받지 않습니다.

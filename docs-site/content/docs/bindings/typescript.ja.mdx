@@ -1,0 +1,79 @@
+---
+title: TypeScript / Node
+description: napi-rsバインディング + コードジェン完全ORM
+---
+
+TypeScriptはPowderが最も手厚くサポートする言語です。`powder generate`が
+`powder.schema.json`からtypedモデルを生成し、ランタイムはnapi-rsの上で
+外部バッファをzero-copyで読み取ります。
+
+## インストール
+
+```bash
+powder new my-app && cd my-app
+npm install
+```
+
+既存プロジェクトならドライバーのみ。
+
+```bash
+npm install @powder/node
+```
+
+## 接続 → クエリ
+
+```ts
+import { Client } from "@powder/node";
+import { powder } from "./models.js";   // powder generateが生成したファイル
+
+const db = powder(await Client.connect("app.db"));
+
+await db.users.create({ id: 1, name: "alice", score: 9.5, active: true });
+
+// 初心者フレンドリーなチェイニング — 読んだ通りに動きます
+const top = await db.users
+  .where("score", ">=", 5)
+  .orderBy("score", "desc")
+  .limit(10)
+  .all();
+
+// オプションオブジェクト形式 — 同じエンジン、より明示的
+const rows = await db.users.findMany({
+  where: { active: true, score: { gte: 5 } },
+  orderBy: { score: "desc" },
+  limit: 10,
+});
+```
+
+## リレーション(N+1なし)
+
+```ts
+// レベルごとにバッチIN 1クエリでロードされます
+const posts = await db.posts.findMany({ include: { user: true } });
+```
+
+## トランザクション
+
+```ts
+await db.$transaction(async (tx) => {
+  await tx.users.create({ id: 2, name: "bob" });
+  // 返却時にCOMMIT、例外時にROLLBACK。ネストはセーブポイント。
+});
+```
+
+## 独自メソッドを追加 — `$extend`
+
+```ts
+const xdb = db.$extend({
+  posts: {
+    async byUser(this: PowderTable<Posts>, id: number) {
+      return this.where({ user_id: id }).all();
+    },
+  },
+});
+await xdb.posts.byUser(1);
+```
+
+より深い内容は[ORMガイド](/ja/docs/orm)を参照してください。エラーが発生すると失敗した
+SQLと呼び出し元の位置(`file:line:col`)が付き、ターミナルでクリックするとその行に
+移動します。

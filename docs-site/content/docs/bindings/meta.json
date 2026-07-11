@@ -1,0 +1,15 @@
+{
+  "title": "언어 가이드",
+  "pages": [
+    "index",
+    "typescript",
+    "python",
+    "rust",
+    "java",
+    "kotlin",
+    "go",
+    "c",
+    "cpp",
+    "csharp"
+  ]
+}

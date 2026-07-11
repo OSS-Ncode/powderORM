@@ -1,0 +1,45 @@
+---
+title: SQLite
+description: the default backend — full runtime, migrations, and result cache
+---
+
+SQLite is Powder's default backend. No server to install — start from a single
+file or in-memory. It has full support for migrations and the result cache.
+
+## Connecting
+
+```
+sqlite::memory:     in-memory (process lifetime)
+sqlite://./app.db   file (explicit)
+./app.db            file (path only)
+```
+
+## What's supported
+
+| Feature | Support |
+|---|---|
+| Runtime queries | ✅ |
+| DDL generation (`powder ddl --dialect sqlite`) | ✅ |
+| migrate / validate / seed | ✅ (incl. `--rebuild`) |
+| Result cache | ✅ |
+
+## Result cache (SQLite only)
+
+A repeated identical read query answers from the result cache in
+**0.02–0.03ms**. Correctness is held by three gates:
+
+- full invalidation whenever a write happens
+- `data_version` watching for file DBs, to catch external changes
+- queries with non-deterministic functions (e.g. `random()`) are excluded from
+  caching
+
+## Destructive migrations — `--rebuild`
+
+SQLite can't drop a column or change a type directly. `--rebuild` resolves that
+with the official rebuild pattern while **preserving data in surviving columns**.
+
+```bash
+powder migrate --db app.db --rebuild
+```
+
+Type mapping: `int → INTEGER`, `float → REAL`, `text → TEXT`, `bool → INTEGER`.

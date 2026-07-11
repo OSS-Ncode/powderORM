@@ -1,0 +1,68 @@
+---
+title: C++
+description: ヘッダー1つで完結するRAIIラッパー + PCBデコーダー
+---
+
+C++バインディングはヘッダー1つ(`include/powder.hpp`、C++17)です。C ABIの上に
+RAIIラッパーとPCBデコーダーを乗せ、メモリ管理をデストラクタに任せます。
+
+## 使い方
+
+```cpp
+#include "powder.hpp"
+
+powder::Client db("sqlite::memory:");
+db.execute("CREATE TABLE t (id INTEGER, name TEXT, score REAL)");
+db.execute("INSERT INTO t VALUES (?, ?, ?)", {int64_t{1}, "alice", 9.5});
+
+powder::Batch b = db.query("SELECT * FROM t WHERE score >= ?", {5.0});
+for (size_t r = 0; r < b.num_rows(); ++r)
+    std::cout << b["id"].i64(r) << " " << b["name"].str(r) << "\n";
+```
+
+- `Client`・`Batch`いずれも**move-only RAII** — 破棄時に接続・ネイティブ
+  バッファが自動的に解放されます。
+- カラム読み取りはPCBバッファ上のビューです。`i64/f64/boolean/str(row)`、
+  `is_valid(row)`。`str`は`string_view`なのでバッチの寿命内でのみ有効です。
+- エラーはすべて`powder::Error`(エンジンメッセージ含む)としてスローされます。
+
+## トランザクション
+
+```cpp
+db.transaction([](powder::Client& tx) {
+    tx.execute("INSERT INTO t VALUES (2, 'bob', 1.0)");
+    // 返却時にCOMMIT、例外時にROLLBACK。ネストはセーブポイント。
+});
+```
+
+## ORM
+
+C++もPowder ORMを完全サポートしています — 共有Rustエンジン(`powder_core::orm`)
+ベースなので演算と文法がすべての言語で同一です。`find_many`/`find_first`/`create`/
+`create_many`/`update`/`remove`/`remove_all`/`count`/`exists`/`aggregate`/
+`group_by`(+having)、ネストした`AND`/`OR`/`NOT` where(`eq ne gt gte lt lte like in`)、
+`include`(バッチリレーションロード)、`join`(belongsTo LEFT JOIN)。`delete`は
+C++の予約語なので`remove`/`remove_all`として公開されています。スキーマは
+`powder.schema.json`テキストをランタイムに渡し、オプションはJSONオブジェクト
+文字列、行はJSON文字列で返ってきます。
+
+```cpp
+powder::Orm orm(db, schema_json);
+auto users = orm.table("users");
+
+users.create(R"({"id":1,"name":"alice","score":9.5,"active":true})");
+
+std::string rows = users.find_many(
+    R"({"where":{"active":true,"score":{"gte":5}},
+        "orderBy":{"score":"desc"},"limit":10})");
+
+users.update(R"({"id":1})", R"({"score":10})");
+users.count(R"({"active":true})");
+```
+
+## ビルド (Windows / MSVC)
+
+```bat
+cargo build -p powder-ffi --release
+cl /std:c++17 /EHsc /W3 /utf-8 test\test_powder.cpp /link <target>\release\powder_ffi.dll.lib
+```

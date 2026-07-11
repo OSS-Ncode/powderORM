@@ -1,0 +1,78 @@
+---
+title: クイックスタート
+description: powder newから最初のクエリまで
+---
+
+## 1. プロジェクトを作成する
+
+```bash
+powder new my-app && cd my-app
+npm install
+```
+
+`powder new`が生成するもの: `powder.schema.json`（+エディタ補完用のJSON
+Schema）、シードデータ、tsconfig、デモの`src/main.ts`、生成済みのtyped
+モデル。
+
+## 2. スキーマ → データベース
+
+```bash
+npm run migrate     # CREATE TABLE（FK依存順）
+npm run seed        # seed.jsonを投入
+npm run generate    # src/models.tsを再生成（AOTクエリコンパイル）
+```
+
+`powder.schema.json`を開くと、VS Codeがテーブル・カラム・型を自動補完して
+くれます。
+
+```json
+{
+  "$schema": "./powder.schema.schema.json",
+  "tables": {
+    "users": {
+      "columns": {
+        "id":     { "type": "int",   "primaryKey": true },
+        "name":   { "type": "text" },
+        "score":  { "type": "float", "nullable": true },
+        "active": { "type": "bool" }
+      }
+    }
+  }
+}
+```
+
+## 3. 最初のクエリ
+
+```ts
+import { Client } from "@powder/node";
+import { powder } from "./models.js";
+
+const db = powder(await Client.connect("app.db"));
+
+await db.users.create({ id: 1, name: "alice", score: 9.5, active: true });
+
+const alice = await db.users.find(1);
+const top = await db.users
+  .where("score", ">=", 5)      // 3引数形式
+  .orderBy("score", "desc")
+  .limit(10)
+  .all();
+```
+
+## 4. ビルドゲート
+
+スキーマとDBが食い違っていたらビルドを止めましょう。
+
+```bash
+powder validate --db app.db && tsc
+```
+
+ドリフトがあれば`mismatch: ...`の一覧とともにexit 1になります。
+
+## スキーマを変更したら
+
+```bash
+powder migrate --db app.db              # 加算的（テーブル/カラム追加）
+powder migrate --db app.db --rebuild    # 破壊的変更まで対応（データ保持、SQLite）
+npm run generate                        # モデルを再生成
+```

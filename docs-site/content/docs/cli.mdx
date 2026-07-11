@@ -1,0 +1,47 @@
+---
+title: CLI 레퍼런스
+description: powder new · init · generate · migrate · validate · seed · ddl
+---
+
+```text
+powder new <dir>       새 프로젝트 스캐폴딩 (create-powder-app)
+powder init            powder.schema.json + 에디터용 JSON Schema 생성
+powder generate        AOT typed 모델 생성 (--ts / --py)
+powder ddl             CREATE TABLE 출력 (--dialect sqlite|postgres|mysql)
+powder migrate --db    테이블 생성/컬럼 추가 (가산적; --rebuild로 파괴적 변경)
+powder validate --db   스키마↔DB 드리프트 검출 — 불일치 시 exit 1 (빌드 게이트)
+powder seed --db       .json / .sql 시드 적재
+```
+
+DB URL: `sqlite::memory:` · `sqlite://path` · 경로 ·
+`postgres://user:pass@host/db` · `mysql://user:pass@host/db`
+
+## migrate
+
+백엔드별 introspection(SQLite PRAGMA / Postgres pg_catalog / MySQL
+information_schema)으로 현재 상태를 읽고, **그 방언의 DDL**만 적용합니다.
+이미 맞으면 `database already up to date`.
+
+`--rebuild`(SQLite 전용): 컬럼 삭제·타입 변경 같은 파괴적 드리프트를
+공식 재구축 패턴으로 해소합니다. 살아남는 컬럼의 데이터는 보존됩니다.
+
+## validate = 빌드 게이트
+
+```bash
+powder validate --db app.db && tsc
+```
+
+컬럼 존재/타입/NULL/기본 키 순서(복합 포함)/외래 키(복합 포함)/여분 컬럼을
+대조하고, 불일치가 있으면 목록과 함께 실패합니다. CI에 넣으면 스키마
+드리프트가 런타임 오류가 되기 전에 잡힙니다.
+
+## 방언별 타입
+
+| 스키마 | sqlite | postgres | mysql |
+|---|---|---|---|
+| int | INTEGER | BIGINT | BIGINT |
+| float | REAL | DOUBLE PRECISION | DOUBLE |
+| text | TEXT | TEXT | TEXT / VARCHAR(255)* |
+| bool | INTEGER | BOOLEAN | TINYINT(1) |
+
+*MySQL은 키 멤버 text를 VARCHAR(255)로 렌더링합니다 (bare TEXT는 인덱스 불가).

@@ -1,0 +1,49 @@
+---
+title: CLI reference
+description: powder new · init · generate · migrate · validate · seed · ddl
+---
+
+```text
+powder new <dir>       scaffold a new project (create-powder-app)
+powder init            create powder.schema.json + editor JSON Schema
+powder generate        generate AOT typed models (--ts / --py)
+powder ddl             print CREATE TABLE (--dialect sqlite|postgres|mysql)
+powder migrate --db    create tables / add columns (additive; --rebuild for destructive)
+powder validate --db   detect schema↔DB drift — exit 1 on mismatch (build gate)
+powder seed --db       load .json / .sql seeds
+```
+
+DB URL: `sqlite::memory:` · `sqlite://path` · a path ·
+`postgres://user:pass@host/db` · `mysql://user:pass@host/db`
+
+## migrate
+
+Reads current state via backend introspection (SQLite PRAGMA / Postgres
+pg_catalog / MySQL information_schema) and applies **only that dialect's DDL**.
+If it already matches, you get `database already up to date`.
+
+`--rebuild` (SQLite only): resolves destructive drift — dropped columns, type
+changes — with the official rebuild pattern. Data in surviving columns is
+preserved.
+
+## validate = build gate
+
+```bash
+powder validate --db app.db && tsc
+```
+
+It checks column existence / type / NULL / primary-key order (including
+composite) / foreign keys (including composite) / extra columns, and fails with
+a list on any mismatch. Put it in CI and schema drift gets caught before it
+becomes a runtime error.
+
+## Types by dialect
+
+| schema | sqlite | postgres | mysql |
+|---|---|---|---|
+| int | INTEGER | BIGINT | BIGINT |
+| float | REAL | DOUBLE PRECISION | DOUBLE |
+| text | TEXT | TEXT | TEXT / VARCHAR(255)* |
+| bool | INTEGER | BOOLEAN | TINYINT(1) |
+
+*MySQL renders a `text` key member as VARCHAR(255) (a bare TEXT can't be indexed).

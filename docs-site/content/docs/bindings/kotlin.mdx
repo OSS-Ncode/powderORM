@@ -1,0 +1,88 @@
+---
+title: Kotlin
+description: Java 위에 얹은 ORM 스타일 DSL
+---
+
+Kotlin 바인딩은 Java(JNI) 바인딩 위에 관용적 Kotlin API를 얹어요. 체이너블
+쿼리 빌더, infix where 연산자, 트랜잭션 블록까지 — 런타임 DSL이라 코드젠
+없이 바로 씁니다.
+
+## 연결 → 쿼리
+
+```kotlin
+import dev.powder.*
+
+Database.connect("sqlite::memory:", libPath).use { db ->
+    db.execute("CREATE TABLE users (id INTEGER, name TEXT, score REAL, active INTEGER)")
+
+    // ORM 스타일 쓰기
+    db.from("users").insert("id" to 1, "name" to "alice", "score" to 9.5, "active" to 1)
+
+    // 체이너블 읽기 — 각 단계가 새 TableRef를 돌려줘서 부분 쿼리 공유가 안전해요
+    val top = db.from("users")
+        .select("id", "name", "score")
+        .where { ("score" gte 5.0) and ("active" eq 1) }
+        .orderBy("score", Order.DESC)
+        .limit(10)
+        .all()                                  // List<Map<String, Any?>>
+
+    val bob = db.from("users").find("id" to 2)  // Map? — 없으면 null
+    db.from("users").where { "id" eq 2 }.update("score" to 5.0)
+    db.from("users").where { "id" eq 2 }.delete()
+}
+```
+
+## where DSL
+
+`eq ne gt gte lt lte like inList` infix 연산자가 파라미터화된 SQL을 만들어요.
+값은 절대 SQL 텍스트에 들어가지 않고(`?` 바인딩), 식별자는
+`[A-Za-z_][A-Za-z0-9_]*` 검증을 통과해야 합니다.
+
+- `"score" eq null` → `score IS NULL`, `"score" ne null` → `IS NOT NULL`
+- `"id" inList emptyList()` → 항상 거짓 (`1 = 0`)
+- `and` / `or`는 괄호로 묶여 우선순위가 보존돼요
+
+## 안전 가드
+
+```kotlin
+db.from("users").update("score" to 5.0)   // ❌ where 없는 update → 예외
+db.from("users").updateAll("score" to 5.0) // ✅ 전체 변경은 명시적으로
+```
+
+## 트랜잭션
+
+```kotlin
+db.transaction { tx ->
+    tx.from("users").insert("id" to 3, "name" to "carol", "score" to 7.5, "active" to 1)
+    // 반환 시 COMMIT, 예외 시 ROLLBACK. 중첩은 세이브포인트.
+}
+```
+
+## 스키마 인식 ORM
+
+`from(...)` DSL과 별개로, `powder.schema.json` 텍스트를 런타임에 넘기면
+공유 Rust 엔진(`powder_core::orm`) 기반의 완전한 ORM을 쓸 수 있어요 —
+연산과 문법이 모든 Powder 언어에서 동일합니다: `findMany`/`findFirst`/
+`create`/`createMany`/`update`/`delete`/`deleteAll`/`count`/`exists`/
+`aggregate`/`groupBy`(+having), 중첩 `AND`/`OR`/`NOT` where
+(`eq ne gt gte lt lte like in`), `include`(배치 관계 로드),
+`join`(belongsTo LEFT JOIN).
+
+```kotlin
+db.orm(schemaJson).use { orm ->
+    val users = orm.table("users")
+    users.create(mapOf("id" to 1, "name" to "alice", "score" to 9.5, "active" to true))
+
+    val top = users.findMany(
+        where = mapOf("active" to true, "score" to mapOf("gte" to 5)),
+        orderBy = mapOf("score" to "desc"),
+        limit = 10,
+    )
+    users.update(mapOf("id" to 1), mapOf("score" to 10))
+    users.count(mapOf("active" to true))
+    users.groupBy(by = listOf("active"), count = true,
+                  having = mapOf("_count" to mapOf("gte" to 2)))
+}
+```
+
+빌드·테스트는 저장소의 `bindings/kotlin/README.md`를 참고하세요.

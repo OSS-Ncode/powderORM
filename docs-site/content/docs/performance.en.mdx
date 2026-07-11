@@ -1,0 +1,47 @@
+---
+title: Performance
+description: Why it beats the raw driver
+---
+
+Powder doesn't cross the FFI boundary row by row. The Rust core encodes the
+entire result into **one PCB column buffer** and sends it once; each language's
+reader builds a zero-copy view over that buffer.
+
+<BenchmarkExplorer locale="en" />
+
+## Measured (sort, 50,000 rows × 5, median ms)
+
+| runtime | Powder | raw driver | typical ORM |
+|---|---|---|---|
+| Rust | **2.84** | rusqlite 3.94 | Diesel 8.75 |
+| TS/JS | **2.91** | better-sqlite3 11.20 | Prisma 24.57 |
+| Java | **3.98** | JDBC 17.20 | ORMLite 25.07 |
+| Go | **4.08** | database/sql 29.46 | GORM 50.56 |
+| Python | **4.23** | sqlite3 23.07 | Peewee 67.90 |
+
+In all five tabs it's **faster than that language's raw SQL driver.** Every
+runner uses the same data and the same SQL, and must pass a row-count +
+checksum cross-check.
+
+A repeated identical read query (SQLite `:memory:`) answers from the result
+cache in **0.02–0.03ms** — correctness guarded by three gates: full
+invalidation on write, `data_version` watching for file DBs, and blocking
+non-deterministic functions.
+
+## What does the ORM layer cost?
+
+Almost nothing. SQL skeletons are built at `powder generate` time (AOT), and at
+runtime three caches remove the string work of repeat queries:
+
+- **row-factory cache** — a once-codegen'd row builder per table (fixed hidden class)
+- **where-shape cache** — memoizes WHERE fragments by predicate shape (values aren't in the key)
+- **ORDER BY cache** — memoizes sort fragments the same way
+
+## Run it yourself
+
+```bash
+cd bench-site && npm start    # http://localhost:4173
+```
+
+Tabs for TS/JS · Python · Rust · Java · Go, with 4 scenarios (sort / filter /
+aggregate / join) and bar, group, table, and line-sweep views.

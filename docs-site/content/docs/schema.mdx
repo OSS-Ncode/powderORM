@@ -1,0 +1,61 @@
+---
+title: 스키마 파일
+description: powder.schema.json — 단일 소스 오브 트루스
+---
+
+스키마 파일 하나에서 DDL, 마이그레이션, 검증, typed 모델, 관계, 명명
+쿼리가 전부 나옵니다.
+
+```json
+{
+  "$schema": "./powder.schema.schema.json",
+  "tables": {
+    "users": {
+      "columns": {
+        "id":     { "type": "int",   "primaryKey": true },
+        "name":   { "type": "text" },
+        "score":  { "type": "float", "nullable": true },
+        "active": { "type": "bool" }
+      }
+    },
+    "posts": {
+      "columns": {
+        "id":      { "type": "int", "primaryKey": true },
+        "user_id": { "type": "int", "references": { "table": "users", "column": "id" } },
+        "title":   { "type": "text" }
+      }
+    }
+  }
+}
+```
+
+## 타입
+
+`int` · `float` · `text` · `bool` — PCB 와이어 포맷이 zero-copy로 나르는
+집합과 동일합니다. 기본은 NOT NULL이고 `"nullable": true`로 풉니다.
+
+## 키
+
+- **기본 키**: `"primaryKey": true`. 여러 컬럼에 주면 복합 키
+  (`PRIMARY KEY (a, b)`)가 되고, `validate`가 순서까지 대조합니다.
+- **외래 키**: 단일 컬럼은 컬럼의 `references`, 복합은 테이블 레벨
+  `foreignKeys`. 파싱 시 대상 존재·타입 일치를 검사하고, ORM 관계
+  (`posts.user` / `users.posts`)가 자동 파생됩니다.
+
+```json
+"foreignKeys": [
+  { "columns": ["order_id", "order_year"],
+    "references": { "table": "orders", "columns": ["id", "year"] } }
+]
+```
+
+## 에디터 자동완성
+
+`powder init`/`powder new`가 `powder.schema.schema.json`(JSON Schema)을 함께
+만들고 첫 줄의 `$schema`가 그것을 가리킵니다. VS Code에서 키·타입·쿼리
+규약이 자동완성되고 잘못된 값은 편집 중에 바로 표시됩니다.
+
+## 명명 쿼리
+
+[명명 쿼리와 트랜잭션](/ko/docs/orm/queries-transactions) 참조 — `queries`
+섹션의 SQL이 생성 시점에 컴파일되어 typed 메서드가 됩니다.

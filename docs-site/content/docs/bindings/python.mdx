@@ -1,0 +1,54 @@
+---
+title: Python
+description: PyO3 바인딩 + 코드젠 전체 ORM
+---
+
+Python 바인딩은 PyO3로 Rust 코어를 감싸고, TS ORM을 그대로 미러링합니다.
+메서드 이름만 파이썬다운 snake_case예요 (`find_many`, `order_by`).
+
+## 설치
+
+```bash
+pip install powder
+powder generate --py        # powder_models.py 생성
+```
+
+## 연결 → 쿼리
+
+```python
+from powder import connect
+from powder_models import powder          # powder generate --py 결과
+
+db = powder(await connect("sqlite::memory:"))
+
+await db.users.create({"id": 1, "name": "alice", "score": 9.5, "active": True})
+
+top = await db.users.find_many(
+    where={"score": {"gte": 5}},
+    order_by={"id": "asc"},
+    limit=10,
+)
+```
+
+where 연산자는 TS와 동일해요: `eq ne gt gte lt lte like in`.
+`None`은 `IS NULL`, `{"ne": None}`은 `IS NOT NULL`, `{"in": []}`은 항상 거짓.
+
+## 관계
+
+```python
+posts = await db.posts.find_many(include={"user": True})   # 레벨당 배치 IN 1쿼리
+```
+
+## 트랜잭션
+
+```python
+async with db.transaction():
+    await db.users.create({"id": 2, "name": "bob"})
+    # 블록 정상 종료 시 COMMIT, 예외 시 ROLLBACK. 중첩은 세이브포인트.
+```
+
+트랜잭션 범위 안에서도 모델 접근은 `db.<테이블>` 그대로예요 — `with`가
+돌려주는 값은 저수준 드라이버 `Client`라 모델 래퍼가 없습니다.
+
+오류는 `PowderError`로 감싸지고 실패한 SQL과 호출자 위치(`file:line`)가
+붙어요. AOT 코드젠 덕에 런타임은 쿼리를 다시 파싱하지 않고 조각만 이어붙입니다.

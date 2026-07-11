@@ -1,0 +1,43 @@
+---
+title: 데이터베이스
+description: SQLite · PostgreSQL · MySQL · SQL Server · libSQL · CockroachDB
+---
+
+백엔드는 `Client.connect(url)`의 URL 하나로 고릅니다 — 모든 바인딩 공통이에요.
+코드는 그대로 두고 연결 문자열만 바꾸면 됩니다.
+
+```
+sqlite::memory:  |  sqlite://path  |  path          → SQLite
+postgres://user:pass@host/db                        → PostgreSQL (CockroachDB도 동일)
+mysql://user:pass@host/db                           → MySQL / MariaDB
+mssql://user:pass@host/db                           → SQL Server (유저 생략 = Windows 통합 인증)
+libsql://host[?tls=false][&authToken=…]             → libSQL (sqld / Turso)
+```
+
+| 백엔드 | 런타임 | DDL | migrate / validate / seed | 결과 캐시 |
+|---|---|---|---|---|
+| [SQLite](/ko/docs/databases/sqlite) (기본) | ✅ | ✅ | ✅ (`--rebuild` 포함) | ✅ |
+| [PostgreSQL](/ko/docs/databases/postgres) | ✅ | ✅ | ✅ | — |
+| [MySQL / MariaDB](/ko/docs/databases/mysql) | ✅ | ✅ | ✅ | — |
+| CockroachDB (PG wire) | ✅ | ✅ | ✅ | — |
+| SQL Server | ✅ | ✅ (`--dialect mssql`) | ✅ | — |
+| libSQL (sqld / Turso) | ✅ | ✅ (SQLite와 동일) | ✅ | — |
+
+- **CockroachDB**는 PostgreSQL 드라이버로 그대로 동작해요 (`postgres://` URL).
+- **SQL Server**: ORM의 `limit`은 `TOP (n)`으로, `offset`은 `OFFSET … FETCH`
+  (2012+, `orderBy` 필수)로 렌더돼요. 트랜잭션 문장(`BEGIN IMMEDIATE`,
+  `SAVEPOINT`, `RELEASE`)은 T-SQL로 자동 정규화됩니다. 스키마의 `text`는
+  `NVARCHAR(400)`으로 렌더돼요 (비교·인덱스 가능한 유니코드).
+- **libSQL**: SQLite 방언 그대로 원격 sqld/Turso에 연결해요. 연결 시
+  `PRAGMA foreign_keys=ON`이 적용됩니다.
+
+## 어디서나 같은 규칙
+
+- **자리표시자는 항상 `?`** — Postgres에서는 엔진이 `$n`으로 자동 변환해요
+  (문자열 리터럴·주석·`::` 캐스트는 보존).
+- **타입 매핑 밖의 컬럼은 정직하게 실패**합니다. 조용히 틀리게 디코드하는
+  대신 "이렇게 캐스트하세요"라는 오류를 냅니다.
+- **결과 캐시는 SQLite 전용**이에요. 서버 DB는 다른 클라이언트의 쓰기를
+  감지할 수 없어 캐시를 끕니다(정확성 우선).
+
+내 DB 페이지에서 연결 문자열·주의점·검증 방법을 확인하세요.

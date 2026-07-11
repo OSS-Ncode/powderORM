@@ -1,0 +1,63 @@
+---
+title: スキーマファイル
+description: powder.schema.json — 唯一の信頼できる情報源（single source of truth）
+---
+
+1つのスキーマファイルから、DDL、マイグレーション、検証、typedモデル、
+リレーション、名前付きクエリのすべてが生成されます。
+
+```json
+{
+  "$schema": "./powder.schema.schema.json",
+  "tables": {
+    "users": {
+      "columns": {
+        "id":     { "type": "int",   "primaryKey": true },
+        "name":   { "type": "text" },
+        "score":  { "type": "float", "nullable": true },
+        "active": { "type": "bool" }
+      }
+    },
+    "posts": {
+      "columns": {
+        "id":      { "type": "int", "primaryKey": true },
+        "user_id": { "type": "int", "references": { "table": "users", "column": "id" } },
+        "title":   { "type": "text" }
+      }
+    }
+  }
+}
+```
+
+## 型
+
+`int` · `float` · `text` · `bool` — PCBワイヤーフォーマットがzero-copyで
+運ぶ集合と同一です。デフォルトはNOT NULLで、`"nullable": true`で解除
+します。
+
+## キー
+
+- **主キー**: `"primaryKey": true`。複数カラムに指定すると複合キー
+  （`PRIMARY KEY (a, b)`）となり、`validate`が順序まで照合します。
+- **外部キー**: 単一カラムの場合はカラムの`references`、複合の場合は
+  テーブルレベルの`foreignKeys`。パース時に参照先の存在・型一致を検査し、
+  ORMのリレーション（`posts.user` / `users.posts`）が自動的に導出されます。
+
+```json
+"foreignKeys": [
+  { "columns": ["order_id", "order_year"],
+    "references": { "table": "orders", "columns": ["id", "year"] } }
+]
+```
+
+## エディタ補完
+
+`powder init`/`powder new`が`powder.schema.schema.json`（JSON Schema）を
+同時に生成し、先頭行の`$schema`がそれを指します。VS Codeでキー・型・
+クエリの規約が自動補完され、不正な値は編集中にその場で表示されます。
+
+## 名前付きクエリ
+
+[名前付きクエリとトランザクション](/ja/docs/orm/queries-transactions)を参照
+してください — `queries`セクションのSQLが生成時にコンパイルされ、typedな
+メソッドになります。

@@ -1,0 +1,76 @@
+---
+title: C#
+description: P/Invoke 바인딩 (.NET 8+)
+---
+
+C# 바인딩은 P/Invoke로 `powder_ffi` 네이티브 라이브러리를 호출하고, PCB
+컬럼 버퍼를 관리 코드에서 디코드해요. .NET 8 이상이 필요합니다.
+
+## 네이티브 라이브러리 위치
+
+1. 환경변수 `POWDER_LIB`에 전체 경로 지정, 또는
+2. `powder_ffi.dll` / `libpowder_ffi.so`를 앱 옆이나 로더 검색 경로에 배치.
+
+## 사용법
+
+```csharp
+using Powder;
+
+using var db = Client.Connect("sqlite::memory:");
+db.Execute("CREATE TABLE t (id INTEGER, name TEXT, score REAL)");
+db.Execute("INSERT INTO t VALUES (?,?,?)", 1L, "alice", 9.5);
+
+Batch batch = db.Query("SELECT * FROM t WHERE score >= ?", 5.0);
+for (int r = 0; r < batch.NumRows; r++)
+    Console.WriteLine($"{batch["id"].GetInt64(r)} {batch["name"].GetString(r)}");
+```
+
+- 파라미터는 `long`/`double`/`bool`/`string`/`null` (내부적으로 JSON 배열로
+  전달돼요).
+- `Column.Get(row)`은 박싱된 값(또는 SQL NULL이면 `null`),
+  `GetInt64/GetDouble/GetBoolean/GetString`은 무박싱 경로예요.
+- 오류는 전부 `PowderException`(엔진 메시지 포함).
+
+## 트랜잭션
+
+```csharp
+db.Transaction(tx => {
+    tx.Execute("INSERT INTO t VALUES (2, 'bob', 1.0)");
+    // 반환 시 COMMIT, 예외 시 ROLLBACK. 중첩은 세이브포인트.
+});
+```
+
+## ORM
+
+C#도 Powder ORM을 완전 지원해요 — Rust 코어에 한 번 구현된 공유 엔진
+(`powder_core::orm`)을 쓰므로 연산과 문법이 모든 언어에서 동일합니다:
+`FindMany`/`FindFirst`/`Create`/`CreateMany`/`Update`/`Delete`/`DeleteAll`/
+`Count`/`Exists`/`Aggregate`/`GroupBy`(+having), 중첩 `AND`/`OR`/`NOT` where
+(`eq ne gt gte lt lte like in`), `include`(배치 관계 로드),
+`join`(belongsTo LEFT JOIN). 스키마는 `powder.schema.json` 텍스트를 런타임에
+넘기고, 옵션은 익명 객체(또는 딕셔너리), 행은
+`System.Text.Json.Nodes.JsonArray`로 돌아와요.
+
+```csharp
+using var orm = db.Orm(schemaJson);
+var users = orm.Table("users");
+
+users.Create(new { id = 1, name = "alice", score = 9.5, active = true });
+
+var rows = users.FindMany(new
+{
+    where = new { active = true, score = new { gte = 5 } },
+    orderBy = new { score = "desc" },
+    limit = 10,
+});   // JsonArray
+Console.WriteLine(rows[0]!["name"]);
+```
+
+## 빌드 & 테스트
+
+```bash
+cargo build -p powder-ffi --release
+cd bindings/csharp/Powder.Tests
+POWDER_LIB=<target>/release/powder_ffi.dll dotnet run
+# -> csharp binding OK (32 checks)
+```

@@ -1,0 +1,54 @@
+---
+title: Python
+description: PyO3 绑定 + 代码生成的完整 ORM
+---
+
+Python 绑定通过 PyO3 封装 Rust 核心,与 TS ORM 完全镜像。
+只是方法名用了更符合 Python 风格的 snake_case(`find_many`、`order_by`)。
+
+## 安装
+
+```bash
+pip install powder
+powder generate --py        # 生成 powder_models.py
+```
+
+## 连接 → 查询
+
+```python
+from powder import connect
+from powder_models import powder          # powder generate --py 的产物
+
+db = powder(await connect("sqlite::memory:"))
+
+await db.users.create({"id": 1, "name": "alice", "score": 9.5, "active": True})
+
+top = await db.users.find_many(
+    where={"score": {"gte": 5}},
+    order_by={"id": "asc"},
+    limit=10,
+)
+```
+
+where 运算符与 TS 相同:`eq ne gt gte lt lte like in`。
+`None` 对应 `IS NULL`,`{"ne": None}` 对应 `IS NOT NULL`,`{"in": []}` 恒为假。
+
+## 关联关系
+
+```python
+posts = await db.posts.find_many(include={"user": True})   # 每层以一条批量 IN 查询加载
+```
+
+## 事务
+
+```python
+async with db.transaction():
+    await db.users.create({"id": 2, "name": "bob"})
+    # 代码块正常结束时 COMMIT,抛出异常时 ROLLBACK。嵌套则使用保存点。
+```
+
+在代码块内继续使用 `db.<表名>` 访问模型 — 上下文管理器返回的是底层驱动
+`Client`,没有模型包装。
+
+错误会被包装为 `PowderError`,并附带失败的 SQL 和调用位置(`file:line`)。
+得益于 AOT 代码生成,运行时不会重新解析查询,只需拼接片段。

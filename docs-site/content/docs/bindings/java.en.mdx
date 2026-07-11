@@ -1,0 +1,78 @@
+---
+title: Java
+description: JNI binding + copy-free queryDirect path
+---
+
+The Java binding calls the Rust core over JNI. It gives you a driver + PCB
+reader, plus a fully **copy-free** `queryDirect()` for hot paths.
+
+## Setup
+
+```bash
+cargo build -p powder-java --release        # native library
+cd crates/powder-java && javac -d out java/com/powder/*.java
+```
+
+Tell it where the native library is via `POWDER_LIB` or the loader search path.
+
+## Connect → query
+
+```java
+try (Client db = Client.connect("sqlite::memory:")) {
+    db.execute("CREATE TABLE t (id INTEGER, name TEXT, score REAL)");
+    db.execute("INSERT INTO t VALUES (?, ?, ?)", 1L, "alice", 9.5);
+
+    Batch b = db.query("SELECT id, name FROM t WHERE score >= ?", 5.0);
+    for (int r = 0; r < b.numRows(); r++)
+        System.out.println(b.column("id").getLong(r) + " " + b.column("name").getString(r));
+}
+```
+
+## The copy-free path — `queryDirect`
+
+```java
+try (Batch b = db.queryDirect("SELECT * FROM t")) {   // DirectByteBuffer, zero copies
+    long id = b.column("id").getLong(0);
+}   // close() frees native memory — reading after close throws (prevents UAF)
+```
+
+`queryDirect` exposes the PCB buffer as a `DirectByteBuffer` with no copy. In
+return, the `Batch` owns native memory, so you must close it with
+try-with-resources; reading after close throws (use-after-free prevention).
+
+## Transactions
+
+```java
+db.transaction(tx -> {
+    tx.execute("INSERT INTO t VALUES (2, 'bob', 1.0)");
+    // return to COMMIT, throw to ROLLBACK. Nested = savepoint.
+});
+```
+
+## ORM
+
+Java has the full Powder ORM via the shared engine implemented once in the
+Rust core (`powder_core::orm`), so the operations and syntax are identical in
+every language: `findMany`/`findFirst`/`create`/`createMany`/`update`/
+`delete`/`deleteAll`/`count`/`exists`/`aggregate`/`groupBy` (+having), nested
+`AND`/`OR`/`NOT` where (`eq ne gt gte lt lte like in`), `include` (batched
+relation load), and `join` (belongsTo LEFT JOIN). The schema is your
+`powder.schema.json` text, passed at runtime.
+
+```java
+try (Orm orm = db.orm(schemaJson)) {
+    Orm.Table users = orm.table("users");
+    users.create(Map.of("id", 1, "name", "alice", "score", 9.5, "active", true));
+
+    List<Map<String, Object>> rows = users.findMany(Map.of(
+        "where", Map.of("active", true, "score", Map.of("gte", 5)),
+        "orderBy", Map.of("score", "desc"),
+        "limit", 10));
+}
+```
+
+Rows come back as `List<Map<String, Object>>`. When key order matters (a
+multi-column `orderBy`), use a `LinkedHashMap` instead of `Map.of`.
+
+Want a more idiomatic query builder and where DSL? The
+[Kotlin](/en/docs/bindings/kotlin) binding sits on top of this one.

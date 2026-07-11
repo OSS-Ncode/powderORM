@@ -1,0 +1,88 @@
+---
+title: Kotlin
+description: Javaの上に乗せたORMスタイルDSL
+---
+
+KotlinバインディングはJava(JNI)バインディングの上に慣用的なKotlin APIを
+乗せます。チェイン可能なクエリビルダー、infix where演算子、トランザクション
+ブロックまで — ランタイムDSLなのでコードジェンなしですぐに使えます。
+
+## 接続 → クエリ
+
+```kotlin
+import dev.powder.*
+
+Database.connect("sqlite::memory:", libPath).use { db ->
+    db.execute("CREATE TABLE users (id INTEGER, name TEXT, score REAL, active INTEGER)")
+
+    // ORMスタイルの書き込み
+    db.from("users").insert("id" to 1, "name" to "alice", "score" to 9.5, "active" to 1)
+
+    // チェイン可能な読み取り — 各ステップが新しいTableRefを返すので部分クエリの共有が安全です
+    val top = db.from("users")
+        .select("id", "name", "score")
+        .where { ("score" gte 5.0) and ("active" eq 1) }
+        .orderBy("score", Order.DESC)
+        .limit(10)
+        .all()                                  // List<Map<String, Any?>>
+
+    val bob = db.from("users").find("id" to 2)  // Map? — なければnull
+    db.from("users").where { "id" eq 2 }.update("score" to 5.0)
+    db.from("users").where { "id" eq 2 }.delete()
+}
+```
+
+## where DSL
+
+`eq ne gt gte lt lte like inList` infix演算子がパラメータ化されたSQLを
+作ります。値は絶対にSQLテキストに入らず(`?`バインディング)、識別子は
+`[A-Za-z_][A-Za-z0-9_]*`検証を通過する必要があります。
+
+- `"score" eq null` → `score IS NULL`、`"score" ne null` → `IS NOT NULL`
+- `"id" inList emptyList()` → 常に偽(`1 = 0`)
+- `and` / `or`は括弧で囲まれ優先順位が保存されます
+
+## 安全ガード
+
+```kotlin
+db.from("users").update("score" to 5.0)   // ❌ whereなしのupdate → 例外
+db.from("users").updateAll("score" to 5.0) // ✅ 全体変更は明示的に
+```
+
+## トランザクション
+
+```kotlin
+db.transaction { tx ->
+    tx.from("users").insert("id" to 3, "name" to "carol", "score" to 7.5, "active" to 1)
+    // 返却時にCOMMIT、例外時にROLLBACK。ネストはセーブポイント。
+}
+```
+
+## スキーマ認識ORM
+
+`from(...)` DSLとは別に、`powder.schema.json`テキストをランタイムに渡せば
+共有Rustエンジン(`powder_core::orm`)ベースの完全なORMが使えます —
+演算と文法がすべてのPowder言語で同一です。`findMany`/`findFirst`/
+`create`/`createMany`/`update`/`delete`/`deleteAll`/`count`/`exists`/
+`aggregate`/`groupBy`(+having)、ネストした`AND`/`OR`/`NOT` where
+(`eq ne gt gte lt lte like in`)、`include`(バッチリレーションロード)、
+`join`(belongsTo LEFT JOIN)。
+
+```kotlin
+db.orm(schemaJson).use { orm ->
+    val users = orm.table("users")
+    users.create(mapOf("id" to 1, "name" to "alice", "score" to 9.5, "active" to true))
+
+    val top = users.findMany(
+        where = mapOf("active" to true, "score" to mapOf("gte" to 5)),
+        orderBy = mapOf("score" to "desc"),
+        limit = 10,
+    )
+    users.update(mapOf("id" to 1), mapOf("score" to 10))
+    users.count(mapOf("active" to true))
+    users.groupBy(by = listOf("active"), count = true,
+                  having = mapOf("_count" to mapOf("gte" to 2)))
+}
+```
+
+ビルド・テストはリポジトリの`bindings/kotlin/README.md`を参照してください。

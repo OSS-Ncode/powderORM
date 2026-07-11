@@ -1,0 +1,88 @@
+---
+title: Kotlin
+description: 构建在 Java 之上的 ORM 风格 DSL
+---
+
+Kotlin 绑定在 Java(JNI)绑定之上叠加了一层惯用的 Kotlin API。可链式调用的
+查询构建器、infix where 运算符,乃至事务代码块——都是运行时 DSL,
+无需代码生成即可直接使用。
+
+## 连接 → 查询
+
+```kotlin
+import dev.powder.*
+
+Database.connect("sqlite::memory:", libPath).use { db ->
+    db.execute("CREATE TABLE users (id INTEGER, name TEXT, score REAL, active INTEGER)")
+
+    // ORM 风格写入
+    db.from("users").insert("id" to 1, "name" to "alice", "score" to 9.5, "active" to 1)
+
+    // 链式读取 —— 每一步都返回新的 TableRef,因此共享部分查询是安全的
+    val top = db.from("users")
+        .select("id", "name", "score")
+        .where { ("score" gte 5.0) and ("active" eq 1) }
+        .orderBy("score", Order.DESC)
+        .limit(10)
+        .all()                                  // List<Map<String, Any?>>
+
+    val bob = db.from("users").find("id" to 2)  // Map? —— 不存在则为 null
+    db.from("users").where { "id" eq 2 }.update("score" to 5.0)
+    db.from("users").where { "id" eq 2 }.delete()
+}
+```
+
+## where DSL
+
+`eq ne gt gte lt lte like inList` 这些 infix 运算符会生成参数化的 SQL。
+值永远不会进入 SQL 文本(通过 `?` 绑定),标识符必须通过
+`[A-Za-z_][A-Za-z0-9_]*` 校验。
+
+- `"score" eq null` → `score IS NULL`,`"score" ne null` → `IS NOT NULL`
+- `"id" inList emptyList()` → 恒为假(`1 = 0`)
+- `and` / `or` 会用括号包裹,保留运算优先级
+
+## 安全防护
+
+```kotlin
+db.from("users").update("score" to 5.0)   // ❌ 没有 where 的 update → 抛出异常
+db.from("users").updateAll("score" to 5.0) // ✅ 修改整表需要显式声明
+```
+
+## 事务
+
+```kotlin
+db.transaction { tx ->
+    tx.from("users").insert("id" to 3, "name" to "carol", "score" to 7.5, "active" to 1)
+    // 返回时 COMMIT,抛出异常时 ROLLBACK。嵌套则使用保存点。
+}
+```
+
+## 感知 Schema 的 ORM
+
+与 `from(...)` DSL 相独立,只需在运行时传入 `powder.schema.json` 文本,
+即可使用基于共享 Rust 引擎(`powder_core::orm`)的完整 ORM —— 运算和语法
+在所有 Powder 语言中完全一致:`findMany`/`findFirst`/
+`create`/`createMany`/`update`/`delete`/`deleteAll`/`count`/`exists`/
+`aggregate`/`groupBy`(+having)、嵌套 `AND`/`OR`/`NOT` where
+(`eq ne gt gte lt lte like in`)、`include`(批量关联加载)、
+`join`(belongsTo LEFT JOIN)。
+
+```kotlin
+db.orm(schemaJson).use { orm ->
+    val users = orm.table("users")
+    users.create(mapOf("id" to 1, "name" to "alice", "score" to 9.5, "active" to true))
+
+    val top = users.findMany(
+        where = mapOf("active" to true, "score" to mapOf("gte" to 5)),
+        orderBy = mapOf("score" to "desc"),
+        limit = 10,
+    )
+    users.update(mapOf("id" to 1), mapOf("score" to 10))
+    users.count(mapOf("active" to true))
+    users.groupBy(by = listOf("active"), count = true,
+                  having = mapOf("_count" to mapOf("gte" to 2)))
+}
+```
+
+构建·测试请参考仓库中的 `bindings/kotlin/README.md`。

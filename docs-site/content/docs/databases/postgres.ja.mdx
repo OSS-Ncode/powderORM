@@ -1,0 +1,60 @@
+---
+title: PostgreSQL
+description: ランタイム・マイグレーション完全サポート、プレースホルダー自動変換
+---
+
+PostgreSQLはランタイムクエリとマイグレーションを完全にサポートしています。SQLiteで
+使っていたコードはそのままに、接続文字列だけを変えれば大丈夫です。
+
+## 接続
+
+```
+postgres://user:pass@host:5432/dbname
+```
+
+## プレースホルダーはそのまま `?`
+
+Postgresは本来 `$1, $2` 構文を使いますが、Powderエンジンが `?` を `$n` に**自動
+変換**してくれます。文字列リテラル・コメント・`::` キャスト内の `?` は変更されません。
+
+```sql
+SELECT * FROM users WHERE score >= ? AND name LIKE ?
+-- エンジンが内部的に $1, $2 に変換
+```
+
+## 型マッピングの注意点
+
+マッピング外の型は誤ったまま静かにデコードされることはなく、**案内エラー**を出します。
+
+```
+Postgres NUMERIC カラム → "col::text にキャストしてください" エラー
+```
+
+その場合はクエリで明示的にキャストしてください。
+
+```sql
+SELECT amount::text FROM orders
+```
+
+## 結果キャッシュなし
+
+Postgresは他のクライアントの書き込みをPowderが検知できないため、結果キャッシュを
+オフにします(正確性を優先)。これはSQLite専用の最適化です。
+
+## DDL / マイグレーション
+
+```bash
+powder ddl --dialect postgres          # CREATE TABLE を出力
+powder migrate --db postgres://...     # pg_catalog introspection → 必要なDDLのみ適用
+```
+
+型マッピング: `int → BIGINT`, `float → DOUBLE PRECISION`, `text → TEXT`,
+`bool → BOOLEAN`。
+
+## サーバーで検証
+
+```bash
+POWDER_PG_URL=postgres://... cargo test -p powder-core --features postgres
+```
+
+環境変数がない場合、該当テストはスキップされるためCIは壊れません。

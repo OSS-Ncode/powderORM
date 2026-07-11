@@ -1,0 +1,86 @@
+---
+title: Go
+description: C ABI 绑定(Windows 上无需 cgo)
+---
+
+Go 绑定通过 `powder-ffi` 导出的稳定 C ABI 调用 Rust 核心,
+并用纯 Go 代码解码零拷贝的 PCB 列缓冲区。
+
+- **Windows**:不需要 C 工具链——通过 `syscall` 绑定,以
+  `CGO_ENABLED=0` 构建。
+- **Linux / macOS**:通过 cgo `dlopen` 共享库。
+
+## 准备
+
+```bash
+cargo build -p powder-ffi --release
+# -> <target>/release/powder_ffi.{dll,so,dylib}
+```
+
+## 连接 → 查询
+
+```go
+import powder "github.com/OSS-Ncode/powderORM/bindings/go"
+
+if err := powder.Load(os.Getenv("POWDER_LIB")); err != nil { panic(err) }
+
+db, _ := powder.Connect("sqlite::memory:")
+defer db.Close()
+
+db.Exec("CREATE TABLE users (id INTEGER, name TEXT, score REAL)")
+db.Exec("INSERT INTO users VALUES (?,?,?)", 1, "alice", 9.5)
+
+// 流畅式构建器,或带绑定参数的原始 SQL
+batch, _ := db.Run(
+    powder.Table("users").Select("id", "name").
+        Filter("score >= ?", 5.0).OrderBy("id", "ASC"),
+)
+name := batch.Column("name")
+for r := 0; r < batch.NumRows(); r++ {
+    fmt.Println(name.String(r))
+}
+```
+
+绑定参数可接受 Go 的整数·浮点数·`string`·`bool`·`nil`。
+
+## 事务
+
+```go
+err := db.Transaction(func(tx *powder.Client) error {
+    _, err := tx.Exec("INSERT INTO users VALUES (2, 'bob', 7.0)")
+    return err   // nil → COMMIT,error → ROLLBACK。嵌套则使用保存点。
+})
+```
+
+## ORM
+
+Go 也完整支持 Powder ORM —— 使用在 Rust 核心中实现一次的共享引擎
+(`powder_core::orm`),因此运算和语法在所有语言中完全一致:
+`FindMany`/`FindFirst`/`Create`/`CreateMany`/`Update`/`Delete`/`DeleteAll`/
+`Count`/`Exists`/`Aggregate`/`GroupBy`(+having)、嵌套 `AND`/`OR`/`NOT` where
+(`eq ne gt gte lt lte like in`)、`include`(批量关联加载)、
+`join`(belongsTo LEFT JOIN)。将 `powder.schema.json` 文本在运行时传入即可。
+
+```go
+orm, _ := db.Orm(schemaJSON)
+defer orm.Close()
+
+users := orm.Table("users")
+users.Create(powder.M{"id": 1, "name": "alice", "score": 9.5, "active": true})
+
+rows, _ := users.FindMany(powder.M{
+    "where":   powder.M{"active": true, "score": powder.M{"gte": 5}},
+    "orderBy": powder.M{"score": "desc"},
+    "limit":   10,
+})   // []powder.M
+```
+
+`powder.M` 是 `map[string]any` 的别名,行数据也以 `[]powder.M` 返回。
+
+## 需要注意的事项
+
+- PCB 数据体会从原生内存**拷贝一次**到 Go 切片中,之后由 GC 接管所有权
+  —— 这是因为 Go 运行时禁止保留外来指针,属于设计上的安全防护。
+- `Column` 会直接从小端 PCB 中读取值。`Batch.Rows()` 是便于使用的
+  拷贝视图。
+- `Client` 会将自身的调用序列化——由 Rust 核心持有单一连接的所有权。

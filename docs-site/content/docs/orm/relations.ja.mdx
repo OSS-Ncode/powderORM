@@ -1,0 +1,70 @@
+---
+title: リレーションと include
+description: FK から導出されるリレーション、N+1 のないロード、ネストした include
+---
+
+スキーマ上の外部キーがそのままリレーションになります。`user_id → users(id)`
+を宣言すると、`posts.user`(belongsTo)と `users.posts`(hasMany)が
+自動的に生成されます。
+
+```json
+"posts": {
+  "columns": {
+    "id":      { "type": "int", "primaryKey": true },
+    "user_id": { "type": "int", "references": { "table": "users", "column": "id" } },
+    "title":   { "type": "text" }
+  }
+}
+```
+
+## 削除と FK 制約
+
+Powder は FK を「宣言」するだけです —— どの方言でも `ON DELETE
+CASCADE`/`SET NULL` は生成せず、`delete()`/`deleteAll()` も単なる
+`DELETE FROM` 文なので、アプリケーション側の cascade もありません。
+子行が残っている親行を削除すると:
+
+- **PostgreSQL/MySQL**: デフォルトで FK が強制されるため、DB が即座に
+  エラーを返します。
+- **SQLite**: FK 強制はコネクション単位の設定(`PRAGMA foreign_keys`)で、
+  デフォルトでは無効です —— `migrate` は内部的に有効化しますが、
+  アプリが開くコネクションはそうではありません。有効にしないまま
+  親行を削除すると、静かに成功して子行が孤立します。必要であれば
+  接続直後に `PRAGMA foreign_keys = ON` を自分で実行してください。
+
+## include — バッチロード (N+1 なし)
+
+```ts
+// リレーションレベルごとにバッチ IN クエリを1回
+const posts = await db.posts.findMany({ include: { user: true } });
+posts[0].user?.name;
+
+// ネストした include — 各レベルでバッチクエリ1回
+const deep = await db.posts.findMany({
+  include: { user: { include: { posts: true } } },
+});
+```
+
+リレーション名は生成された `*Include` 型のおかげで自動補完され、
+タイプミスはコンパイルエラーになります。
+
+## join — 単一クエリでのハイドレーション
+
+`belongsTo` リレーションは LEFT JOIN 1回でロードできます:
+
+```ts
+const posts = await db.posts.findMany({ join: { user: true } });
+```
+
+`hasMany` に join を使うと親の行が重複してしまうため、明示的なエラーに
+なります — その場合は `include` を使ってください。
+
+## 複合キー
+
+複合主キー(複数カラムに `primaryKey: true`)と複合外部キー(テーブルレベルの
+`foreignKeys`)をサポートしています。リレーションのマッチングはキーの
+タプル単位で行われます。
+
+```ts
+await db.grades.find({ student: 1, course: "math" });   // 複合 PK での検索
+```

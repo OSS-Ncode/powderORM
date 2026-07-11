@@ -1,0 +1,78 @@
+---
+title: Rust
+description: 코어를 직접 쓰는 네이티브 클라이언트
+---
+
+Rust에서는 FFI 경계가 아예 없어요. `powder-core` 크레이트를 직접 의존하면
+됩니다. 다른 언어들이 넘어오는 그 코어를 네이티브로 쓰는 셈이에요.
+
+## 의존성
+
+```toml
+[dependencies]
+powder-core = { path = "crates/powder-core" }   # 또는 게시된 버전
+```
+
+백엔드는 feature로 켭니다: `--features postgres`, `--features mysql`
+(SQLite는 기본).
+
+## 연결 → 쿼리
+
+```rust
+use powder_core::Client;
+
+let db = Client::connect("sqlite::memory:")?;
+db.execute("CREATE TABLE users (id INTEGER, name TEXT, score REAL)", &[])?;
+db.execute("INSERT INTO users VALUES (?, ?, ?)", &[1.into(), "alice".into(), 9.5.into()])?;
+
+// Query 빌더
+let batch = db.query("SELECT id, name FROM users WHERE score >= ?", &[5.0.into()])?;
+for r in 0..batch.num_rows() {
+    println!("{} {}", batch.column("id").i64(r), batch.column("name").str(r));
+}
+```
+
+결과는 PCB 컬럼 버퍼 그대로예요. 다른 언어처럼 별도 디코더가 필요 없고,
+코어가 반환한 배치를 바로 읽습니다.
+
+## 트랜잭션
+
+```rust
+db.transaction(|tx| {
+    tx.execute("INSERT INTO users VALUES (2, 'bob', 7.0)", &[])?;
+    Ok(())   // Ok → COMMIT, Err → ROLLBACK. 중첩은 세이브포인트.
+})?;
+```
+
+자리표시자는 언제나 `?`. Postgres 백엔드에서는 코어가 `$n`으로 자동
+변환해요(문자열 리터럴·주석·`::` 캐스트는 보존). 빌드/테스트는 저장소의
+`crates/powder-core`를 참고하세요.
+
+## ORM
+
+Rust도 Powder ORM을 완전 지원해요 — 사실 다른 언어들이 쓰는 공유 엔진이
+바로 이 `powder_core::orm`입니다. `powder.schema.json` 텍스트를 런타임에
+파싱해 쓰고, 연산과 문법(`findMany`/`findFirst`/`create`/`createMany`/
+`update`/`delete`/`deleteAll`/`count`/`exists`/`aggregate`/`groupBy`+having,
+중첩 `AND`/`OR`/`NOT` where — `eq ne gt gte lt lte like in`,
+`include` 배치 관계 로드, `join` belongsTo LEFT JOIN)이 모든 언어에서
+동일해요.
+
+```rust
+use powder_core::orm::{Orm, OrmSchema};
+use serde_json::json;
+
+let schema_json = std::fs::read_to_string("powder.schema.json")?;
+let orm = Orm::new(db, OrmSchema::parse(&schema_json)?);
+
+orm.execute(&json!({"op": "create", "table": "users",
+    "data": {"id": 1, "name": "alice", "score": 9.5, "active": true}})).await?;
+
+let rows = orm.find_json(&json!({"op": "findMany", "table": "users",
+    "where": {"active": true, "score": {"gte": 5}},
+    "orderBy": {"score": "desc"}, "limit": 10})).await?;
+```
+
+변경 연산(`create`/`update`/`delete`/…)은 `execute`(영향 행 수 반환),
+행을 돌려주는 연산(`findMany`/`groupBy`/…)은 `find_json`(JSON 값 반환)으로
+실행합니다.

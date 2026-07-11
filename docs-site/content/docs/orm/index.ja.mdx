@@ -1,0 +1,68 @@
+---
+title: ORM 概要
+description: スキーマ → typed モデル → CRUD・リレーション・トランザクション
+---
+
+Powder ORM は `powder.schema.json` から生成される typed モデル(`powder generate`)と
+ランタイム(`PowderTable`)で構成されます。2つの文法を提供しますが、同じ
+エンジンを使います:
+
+- **オプションオブジェクト形式** — 明示的で完全な表現力
+- **チェイニング(Finder)形式** — 初心者に優しい、読んだ通りに動く
+
+ORM は**9言語すべてで完全サポート**されています。TS・Python はコード生成
+typed モデルで、残り7言語(Rust・Java・Kotlin・Go・C・C++・C#)は Rust コアに
+一度だけ実装された共有エンジン(`powder_core::orm`)によって — 以下の
+操作・文法は言語に関係なく同一です。言語ごとの使い方は
+[言語ガイド](/ja/docs/bindings)を参照してください。
+
+## CRUD 概要
+
+```ts
+// 書き込み
+await db.users.create({ id: 1, name: "alice", score: 9.5, active: true });
+await db.users.createMany(rows);                       // 自動チャンク分割 (変数上限を保護)
+await db.users.update({ where: { id: 1 }, data: { score: 10 } });
+await db.users.delete({ id: 1 });                      // 空の where は拒否される
+await db.users.deleteAll();                            // 全件削除は明示的に
+
+// 読み込み — オプションオブジェクト形式
+const rows = await db.users.findMany({
+  where: { active: true, score: { gte: 5 } },
+  orderBy: { score: "desc" },
+  limit: 10,
+});
+
+// 読み込み — チェイニング形式 (同じ結果)
+const same = await db.users
+  .where({ active: true })
+  .where("score", ">=", 5)
+  .orderBy("score", "desc")
+  .limit(10)
+  .all();
+```
+
+where 演算子: `eq ne gt gte lt lte like in` ・ `null` は `IS NULL`、
+`{ ne: null }` は `IS NOT NULL` ・ `in: []` は常に false。
+
+## 安全装置
+
+Powder ORM は危険な呼び出しを事前にブロックします:
+
+| 状況 | 動作 |
+|---|---|
+| `delete({})` — 空の where | エラー (全件削除は `deleteAll()`) |
+| `createMany` の行同士でカラムが異なる | エラー (サイレントな NULL 挿入を防止) |
+| `createMany` のチャンクが SQLite の変数上限(32,766)を超過 | 自動的に安全なサイズへ分割 |
+| 不明なカラム・リレーション・演算子 | 即座にエラー + 位置情報 (Click-to-Jump) |
+
+## Click-to-Jump
+
+すべての DB エラーは `PowderError` にラップされ、失敗した SQL と
+**呼び出し元の位置**が付与されます:
+
+```
+PowderError: database error: UNIQUE constraint failed: users.id
+  query: INSERT INTO users (id, name, active) VALUES (?, ?, ?)
+  at src/service.ts:42:19     ← ターミナルでクリックするとその行へジャンプ
+```

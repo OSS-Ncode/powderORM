@@ -1,0 +1,45 @@
+---
+title: 성능
+description: 왜 raw 드라이버보다 빠른가
+---
+
+Powder는 쿼리 결과를 행 단위로 FFI 경계를 넘기지 않습니다. Rust 코어가
+결과 전체를 **PCB 컬럼 버퍼 하나**로 인코딩해 1회 전송하고, 각 언어의
+리더가 그 버퍼 위에 zero-copy 뷰를 만듭니다.
+
+<BenchmarkExplorer locale="ko" />
+
+## 실측 (sort, 50,000행 × 5회, 중앙값 ms)
+
+| 런타임 | Powder | raw 드라이버 | 대표 ORM |
+|---|---|---|---|
+| Rust | **2.84** | rusqlite 3.94 | Diesel 8.75 |
+| TS/JS | **2.91** | better-sqlite3 11.20 | Prisma 24.57 |
+| Java | **3.98** | JDBC 17.20 | ORMLite 25.07 |
+| Go | **4.08** | database/sql 29.46 | GORM 50.56 |
+| Python | **4.23** | sqlite3 23.07 | Peewee 67.90 |
+
+5개 탭 전부에서 **그 언어의 raw SQL 드라이버보다 빠릅니다.** 모든 러너는
+같은 데이터·같은 SQL로 실행되고 행 수+체크섬 교차 검증을 통과해야 합니다.
+
+반복되는 동일 읽기 쿼리(SQLite `:memory:`)는 결과 캐시에서 **0.02~0.03ms**에
+답합니다 — 쓰기 시 전체 무효화, 파일 DB는 `data_version` 감시, 비결정
+함수 차단의 3중 게이트로 정확성이 보장됩니다.
+
+## ORM 레이어의 비용은?
+
+거의 없습니다. SQL 스켈레톤은 `powder generate` 시점에 만들어지고(AOT),
+런타임은 세 가지 캐시로 반복 쿼리의 문자열 작업을 제거합니다:
+
+- **행 팩토리 캐시** — 테이블당 1회 코드젠된 행 생성 함수 (고정 hidden class)
+- **where-shape 캐시** — WHERE 조각을 술어 형태로 메모이즈 (값은 키에 안 들어감)
+- **ORDER BY 캐시** — 정렬 조각도 동일하게 메모이즈
+
+## 직접 돌려보기
+
+```bash
+cd bench-site && npm start    # http://localhost:4173
+```
+
+TS/JS · Python · Rust · Java · Go 탭, 4개 시나리오(정렬/필터/집계/조인),
+막대·그룹·테이블·라인 스윕 뷰를 제공합니다.

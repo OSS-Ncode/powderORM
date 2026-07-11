@@ -1,0 +1,79 @@
+---
+title: Java
+description: JNIバインディング + ゼロコピーqueryDirect経路
+---
+
+JavaバインディングはJNIでRustコアを呼び出します。ドライバー + PCBリーダーを
+提供し、性能が重要な経路には**完全ゼロコピー**の`queryDirect()`があります。
+
+## 準備
+
+```bash
+cargo build -p powder-java --release        # ネイティブライブラリ
+cd crates/powder-java && javac -d out java/com/powder/*.java
+```
+
+ネイティブライブラリの場所は`POWDER_LIB`で伝えるか、ローダー検索パスに置きます。
+
+## 接続 → クエリ
+
+```java
+try (Client db = Client.connect("sqlite::memory:")) {
+    db.execute("CREATE TABLE t (id INTEGER, name TEXT, score REAL)");
+    db.execute("INSERT INTO t VALUES (?, ?, ?)", 1L, "alice", 9.5);
+
+    Batch b = db.query("SELECT id, name FROM t WHERE score >= ?", 5.0);
+    for (int r = 0; r < b.numRows(); r++)
+        System.out.println(b.column("id").getLong(r) + " " + b.column("name").getString(r));
+}
+```
+
+## ゼロコピー経路 — `queryDirect`
+
+```java
+try (Batch b = db.queryDirect("SELECT * FROM t")) {   // DirectByteBuffer、コピー0回
+    long id = b.column("id").getLong(0);
+}   // close()がネイティブメモリを解放 — close後の読み取りは例外(UAF防止)
+```
+
+`queryDirect`はPCBバッファをコピーなしで`DirectByteBuffer`としてそのまま
+公開します。代わりに`Batch`がネイティブメモリを所有するため必ず
+`try-with-resources`で閉じる必要があり、閉じた後に読むと例外が発生します
+(Use-After-Free防止)。
+
+## トランザクション
+
+```java
+db.transaction(tx -> {
+    tx.execute("INSERT INTO t VALUES (2, 'bob', 1.0)");
+    // 返却時にCOMMIT、例外時にROLLBACK。ネストはセーブポイント。
+});
+```
+
+## ORM
+
+JavaもPowder ORMを完全サポートしています — Rustコアに一度だけ実装された共有
+エンジン(`powder_core::orm`)を使うため、演算と文法がすべての言語で同一です。
+`findMany`/`findFirst`/`create`/`createMany`/`update`/`delete`/`deleteAll`/
+`count`/`exists`/`aggregate`/`groupBy`(+having)、ネストした`AND`/`OR`/`NOT` where
+(`eq ne gt gte lt lte like in`)、`include`(バッチリレーションロード)、
+`join`(belongsTo LEFT JOIN)。スキーマは`powder.schema.json`テキストを
+ランタイムに渡すだけです。
+
+```java
+try (Orm orm = db.orm(schemaJson)) {
+    Orm.Table users = orm.table("users");
+    users.create(Map.of("id", 1, "name", "alice", "score", 9.5, "active", true));
+
+    List<Map<String, Object>> rows = users.findMany(Map.of(
+        "where", Map.of("active", true, "score", Map.of("gte", 5)),
+        "orderBy", Map.of("score", "desc"),
+        "limit", 10));
+}
+```
+
+行は`List<Map<String, Object>>`として返ってきます。複数カラムの`orderBy`のように
+キーの順序が重要な場合は`Map.of`の代わりに`LinkedHashMap`を使ってください。
+
+より慣用的なクエリビルダー・where DSLが欲しい場合は[Kotlin](/ja/docs/bindings/kotlin)
+バインディングがこの上に乗っています。

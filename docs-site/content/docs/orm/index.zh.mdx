@@ -1,0 +1,65 @@
+---
+title: ORM 概览
+description: schema → typed 模型 → CRUD·关系·事务
+---
+
+Powder ORM 由从 `powder.schema.json` 生成的 typed 模型(`powder generate`)和
+运行时(`PowderTable`)组成。提供两种语法，使用相同的引擎:
+
+- **选项对象形式** — 显式且表达力完整
+- **链式(Finder)形式** — 对初学者友好，所见即所得
+
+ORM 在**全部 9 种语言中都得到完整支持**。TS、Python 使用代码生成的 typed
+模型，其余 7 种语言(Rust、Java、Kotlin、Go、C、C++、C#)则通过在 Rust 核心中
+实现一次的共享引擎(`powder_core::orm`)提供 —— 以下的操作与语法在各语言间
+完全一致。各语言的具体用法请参见[语言指南](/zh/docs/bindings)。
+
+## CRUD 摘要
+
+```ts
+// 写入
+await db.users.create({ id: 1, name: "alice", score: 9.5, active: true });
+await db.users.createMany(rows);                       // 自动分块 (保护变量上限)
+await db.users.update({ where: { id: 1 }, data: { score: 10 } });
+await db.users.delete({ id: 1 });                      // 空 where 会被拒绝
+await db.users.deleteAll();                            // 全表删除需显式调用
+
+// 读取 — 选项对象形式
+const rows = await db.users.findMany({
+  where: { active: true, score: { gte: 5 } },
+  orderBy: { score: "desc" },
+  limit: 10,
+});
+
+// 读取 — 链式形式 (结果相同)
+const same = await db.users
+  .where({ active: true })
+  .where("score", ">=", 5)
+  .orderBy("score", "desc")
+  .limit(10)
+  .all();
+```
+
+where 运算符: `eq ne gt gte lt lte like in` · `null` 对应 `IS NULL`，
+`{ ne: null }` 对应 `IS NOT NULL` · `in: []` 恒为假。
+
+## 安全防护
+
+Powder ORM 会预先拦截危险调用:
+
+| 情况 | 行为 |
+|---|---|
+| `delete({})` — 空 where | 报错 (全表删除请用 `deleteAll()`) |
+| `createMany` 各行的列不一致 | 报错 (防止静默插入 NULL) |
+| `createMany` 分块超过 SQLite 变量上限 (32,766) | 自动拆分为安全大小 |
+| 未知的列/关系/运算符 | 立即报错 + 定位(Click-to-Jump) |
+
+## Click-to-Jump
+
+所有数据库错误都会被包装为 `PowderError`，附带失败的 SQL 与**调用位置**:
+
+```
+PowderError: database error: UNIQUE constraint failed: users.id
+  query: INSERT INTO users (id, name, active) VALUES (?, ?, ?)
+  at src/service.ts:42:19     ← 在终端中点击即可跳转到该行
+```

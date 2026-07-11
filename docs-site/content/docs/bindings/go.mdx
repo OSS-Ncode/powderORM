@@ -1,0 +1,88 @@
+---
+title: Go
+description: C ABI 바인딩 (Windows는 cgo 불필요)
+---
+
+Go 바인딩은 `powder-ffi`가 내보내는 안정 C ABI를 통해 Rust 코어를 호출하고,
+zero-copy PCB 컬럼 버퍼를 순수 Go로 디코드해요.
+
+- **Windows**: C 툴체인이 필요 없어요 — `syscall`로 바인딩해 `CGO_ENABLED=0`로
+  빌드됩니다.
+- **Linux / macOS**: cgo로 공유 라이브러리를 `dlopen`합니다.
+
+## 준비
+
+```bash
+cargo build -p powder-ffi --release
+# -> <target>/release/powder_ffi.{dll,so,dylib}
+```
+
+## 연결 → 쿼리
+
+```go
+import powder "github.com/OSS-Ncode/powderORM/bindings/go"
+
+if err := powder.Load(os.Getenv("POWDER_LIB")); err != nil { panic(err) }
+
+db, _ := powder.Connect("sqlite::memory:")
+defer db.Close()
+
+db.Exec("CREATE TABLE users (id INTEGER, name TEXT, score REAL)")
+db.Exec("INSERT INTO users VALUES (?,?,?)", 1, "alice", 9.5)
+
+// 플루언트 빌더, 또는 바인딩 파라미터가 있는 raw SQL
+batch, _ := db.Run(
+    powder.Table("users").Select("id", "name").
+        Filter("score >= ?", 5.0).OrderBy("id", "ASC"),
+)
+name := batch.Column("name")
+for r := 0; r < batch.NumRows(); r++ {
+    fmt.Println(name.String(r))
+}
+```
+
+바인딩 파라미터는 Go 정수·부동소수점·`string`·`bool`·`nil`을 받아요.
+
+## 트랜잭션
+
+```go
+err := db.Transaction(func(tx *powder.Client) error {
+    _, err := tx.Exec("INSERT INTO users VALUES (2, 'bob', 7.0)")
+    return err   // nil → COMMIT, error → ROLLBACK. 중첩은 세이브포인트.
+})
+```
+
+## ORM
+
+Go도 Powder ORM을 완전 지원해요 — Rust 코어에 한 번 구현된 공유 엔진
+(`powder_core::orm`)을 쓰므로 연산과 문법이 모든 언어에서 동일합니다:
+`FindMany`/`FindFirst`/`Create`/`CreateMany`/`Update`/`Delete`/`DeleteAll`/
+`Count`/`Exists`/`Aggregate`/`GroupBy`(+having), 중첩 `AND`/`OR`/`NOT` where
+(`eq ne gt gte lt lte like in`), `include`(배치 관계 로드),
+`join`(belongsTo LEFT JOIN). 스키마는 `powder.schema.json` 텍스트를 런타임에
+넘기면 됩니다.
+
+```go
+orm, _ := db.Orm(schemaJSON)
+defer orm.Close()
+
+users := orm.Table("users")
+users.Create(powder.M{"id": 1, "name": "alice", "score": 9.5, "active": true})
+
+rows, _ := users.FindMany(powder.M{
+    "where":   powder.M{"active": true, "score": powder.M{"gte": 5}},
+    "orderBy": powder.M{"score": "desc"},
+    "limit":   10,
+})   // []powder.M
+```
+
+`powder.M`은 `map[string]any`의 별칭이고, 행도 `[]powder.M`으로 돌아와요.
+
+## 알아둘 것
+
+- PCB 페이로드는 네이티브 메모리에서 Go 슬라이스로 **한 번 복사**되고 이후
+  GC가 소유해요 — Go 런타임이 외래 포인터 보관을 금지하기 때문이고, 이는
+  설계상 안전장치입니다.
+- `Column`은 리틀 엔디언 PCB에서 값을 바로 읽어요. `Batch.Rows()`는 편의용
+  복사 뷰입니다.
+- `Client`는 자기 호출을 직렬화해요 — Rust 코어가 단일 연결을 소유합니다.

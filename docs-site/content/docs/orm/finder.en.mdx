@@ -1,0 +1,86 @@
+---
+title: Finder chaining (beginner syntax)
+description: where · orderBy · paginate · aggregates — reads like it runs
+---
+
+Every call that starts with `db.table.where(...)` returns a **new Finder**. You
+can stash partial queries in variables and share them without them affecting
+each other.
+
+## Filtering
+
+```ts
+db.users.where({ active: true })            // object form
+db.users.where("score", ">=", 5)            // 3-arg form (beginner-friendly)
+db.users.where("name", "like", "a%")
+db.users.where("id", "in", [1, 2, 3])
+
+// repeated calls combine with AND
+db.users.where({ active: true }).where("score", ">", 8)
+```
+
+3-arg operators: `=` `!=` `>` `>=` `<` `<=` `like` `in`
+
+## OR · nested conditions
+
+Combine complex conditions to any depth with the `AND`/`OR`/`NOT` logical keys
+(Prisma-style). Top-level column keys and logical keys are all AND'd together.
+
+```ts
+await db.users.findMany({
+  where: {
+    active: true,                       // AND'd with the rest
+    OR: [
+      { score: { gte: 90 } },
+      { name: { like: "vip%" } },
+    ],
+    NOT: { banned: true },
+  },
+});
+```
+
+- `OR: []` (empty) matches nothing.
+- For anything heavier (window functions, CTEs, subqueries) use a
+  [named query](/en/docs/orm/queries-transactions) or raw `db.query()`.
+
+## Terminal methods
+
+```ts
+await q.all();          // T[]
+await q.first();        // T | null
+await q.count();        // number
+await q.exists();       // boolean
+await q.pluck("name");  // array of one column's values
+await q.sum("score");   // aggregates: sum / avg / min / max (null if no rows)
+```
+
+## Pagination
+
+```ts
+const page = await db.users.orderBy("id").paginate(2, 20);  // page 2, 20 per page
+page.rows        // rows on this page
+page.total       // total count (page-independent)
+page.totalPages  // number of pages
+```
+
+## Sorting, ranges, relations
+
+```ts
+db.users.orderBy("score", "desc").orderBy("id")   // multi-sort
+db.users.limit(10).offset(20)
+db.posts.where({...}).include({ user: true })      // load relations (no N+1)
+db.posts.where({...}).join({ user: true })         // belongsTo as a single JOIN
+```
+
+Relation names in `include` / `join` autocomplete thanks to the generated
+types, and typos become compile errors.
+
+## In Python
+
+The same surface exists in snake_case:
+
+```python
+await db.users.where("score", ">=", 5).order_by("score", "desc").limit(10).all()
+await db.users.where(active=True).avg("score")
+page = await db.users.order_by("id").paginate(1, 20)   # page.rows / page.total
+```

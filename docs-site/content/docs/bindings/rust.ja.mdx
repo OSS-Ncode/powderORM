@@ -1,0 +1,78 @@
+---
+title: Rust
+description: コアを直接使うネイティブクライアント
+---
+
+RustではFFI境界がそもそも存在しません。`powder-core`クレートを直接依存すれば
+よいのです。他の言語が越えてくるあのコアをネイティブに使うということです。
+
+## 依存関係
+
+```toml
+[dependencies]
+powder-core = { path = "crates/powder-core" }   # または公開バージョン
+```
+
+バックエンドはfeatureで有効化します。`--features postgres`、`--features mysql`
+(SQLiteはデフォルト)。
+
+## 接続 → クエリ
+
+```rust
+use powder_core::Client;
+
+let db = Client::connect("sqlite::memory:")?;
+db.execute("CREATE TABLE users (id INTEGER, name TEXT, score REAL)", &[])?;
+db.execute("INSERT INTO users VALUES (?, ?, ?)", &[1.into(), "alice".into(), 9.5.into()])?;
+
+// Queryビルダー
+let batch = db.query("SELECT id, name FROM users WHERE score >= ?", &[5.0.into()])?;
+for r in 0..batch.num_rows() {
+    println!("{} {}", batch.column("id").i64(r), batch.column("name").str(r));
+}
+```
+
+結果はPCBカラムバッファそのものです。他の言語のような別途デコーダーは不要で、
+コアが返したバッチをそのまま読みます。
+
+## トランザクション
+
+```rust
+db.transaction(|tx| {
+    tx.execute("INSERT INTO users VALUES (2, 'bob', 7.0)", &[])?;
+    Ok(())   // Ok → COMMIT、Err → ROLLBACK。ネストはセーブポイント。
+})?;
+```
+
+プレースホルダーは常に`?`。Postgresバックエンドではコアが`$n`に自動
+変換します(文字列リテラル・コメント・`::`キャストは保持)。ビルド/テストは
+リポジトリの`crates/powder-core`を参照してください。
+
+## ORM
+
+RustもPowder ORMを完全サポートしています — 実は他の言語が使う共有エンジンが
+まさにこの`powder_core::orm`です。`powder.schema.json`テキストをランタイムで
+パースして使い、演算と文法(`findMany`/`findFirst`/`create`/`createMany`/
+`update`/`delete`/`deleteAll`/`count`/`exists`/`aggregate`/`groupBy`+having、
+ネストした`AND`/`OR`/`NOT` where — `eq ne gt gte lt lte like in`、
+`include`によるバッチリレーションロード、`join`によるbelongsTo LEFT JOIN)が
+すべての言語で同一です。
+
+```rust
+use powder_core::orm::{Orm, OrmSchema};
+use serde_json::json;
+
+let schema_json = std::fs::read_to_string("powder.schema.json")?;
+let orm = Orm::new(db, OrmSchema::parse(&schema_json)?);
+
+orm.execute(&json!({"op": "create", "table": "users",
+    "data": {"id": 1, "name": "alice", "score": 9.5, "active": true}})).await?;
+
+let rows = orm.find_json(&json!({"op": "findMany", "table": "users",
+    "where": {"active": true, "score": {"gte": 5}},
+    "orderBy": {"score": "desc"}, "limit": 10})).await?;
+```
+
+変更演算(`create`/`update`/`delete`/…)は`execute`(影響行数を返す)、
+行を返す演算(`findMany`/`groupBy`/…)は`find_json`(JSON値を返す)で
+実行します。

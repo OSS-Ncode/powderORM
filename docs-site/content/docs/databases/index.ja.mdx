@@ -1,0 +1,43 @@
+---
+title: データベース
+description: SQLite · PostgreSQL · MySQL · SQL Server · libSQL · CockroachDB
+---
+
+バックエンドは `Client.connect(url)` のURL一つで選びます — すべてのバインディング共通です。
+コードはそのままに、接続文字列だけを変えれば大丈夫です。
+
+```
+sqlite::memory:  |  sqlite://path  |  path          → SQLite
+postgres://user:pass@host/db                        → PostgreSQL (CockroachDBも同じ)
+mysql://user:pass@host/db                           → MySQL / MariaDB
+mssql://user:pass@host/db                           → SQL Server (ユーザー省略 = Windows統合認証)
+libsql://host[?tls=false][&authToken=…]             → libSQL (sqld / Turso)
+```
+
+| バックエンド | ランタイム | DDL | migrate / validate / seed | 結果キャッシュ |
+|---|---|---|---|---|
+| [SQLite](/ja/docs/databases/sqlite) (デフォルト) | ✅ | ✅ | ✅ (`--rebuild` を含む) | ✅ |
+| [PostgreSQL](/ja/docs/databases/postgres) | ✅ | ✅ | ✅ | — |
+| [MySQL / MariaDB](/ja/docs/databases/mysql) | ✅ | ✅ | ✅ | — |
+| CockroachDB (PG wire) | ✅ | ✅ | ✅ | — |
+| SQL Server | ✅ | ✅ (`--dialect mssql`) | ✅ | — |
+| libSQL (sqld / Turso) | ✅ | ✅ (SQLiteと同じ) | ✅ | — |
+
+- **CockroachDB**はPostgreSQLドライバーでそのまま動きます (`postgres://` URL)。
+- **SQL Server**: ORMの`limit`は`TOP (n)`、`offset`は`OFFSET … FETCH`
+  (2012+、`orderBy`必須)としてレンダリングされます。トランザクション文
+  (`BEGIN IMMEDIATE`、`SAVEPOINT`、`RELEASE`)は自動的にT-SQLへ正規化されます。
+  スキーマの`text`は`NVARCHAR(400)`になります(比較・インデックス可能なUnicode)。
+- **libSQL**はSQLite方言のままリモートのsqld/Tursoに接続します。接続時に
+  `PRAGMA foreign_keys=ON`が適用されます。
+
+## どこでも同じルール
+
+- **プレースホルダーは常に `?`** — Postgresではエンジンが自動的に `$n` に変換します
+  (文字列リテラル・コメント・`::` キャストは保持されます)。
+- **型マッピング外のカラムは正直に失敗します**。誤ったまま静かにデコードする
+  代わりに、「こうキャストしてください」というエラーを出します。
+- **結果キャッシュはSQLite専用**です。サーバーDBは他のクライアントの書き込みを
+  検知できないため、キャッシュをオフにします(正確性を優先)。
+
+各DBのページで接続文字列・注意点・検証方法を確認してください。

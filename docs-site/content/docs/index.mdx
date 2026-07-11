@@ -1,0 +1,79 @@
+---
+title: Powder 소개
+description: Rust 코어 기반의 zero-copy 멀티플랫폼 ORM
+---
+
+**Powder**는 하나의 Rust 코어 위에 9개 언어 바인딩을 얹은 통합 데이터 접근
+레이어입니다. 쿼리 결과를 Arrow 스타일의 컬럼 버퍼(**PCB**)로 전송해 언어
+경계의 객체 변환 비용을 없애고, 스키마 파일 하나에서 typed 모델과
+마이그레이션·검증을 파생합니다.
+
+## 왜 Powder인가
+
+- **빠릅니다** — 5개 언어 벤치마크 전부에서 그 언어의 raw SQL 드라이버보다
+  빠릅니다. 행 단위 FFI 왕복 대신 컬럼 버퍼 1회 전송이기 때문입니다.
+- **하나의 코어, 하나의 버그** — TS/Python/Kotlin ORM과 모든 드라이버가 같은
+  Rust 엔진을 공유합니다.
+- **스키마가 곧 진실** — `powder.schema.json` 하나로 DDL, 마이그레이션,
+  드리프트 검증(빌드 게이트), typed 모델, 관계, 명명 쿼리가 나옵니다.
+- **정직한 실패** — 매핑할 수 없는 타입, 전 행을 지울 뻔한 delete, 잘못된
+  자리표시자는 조용히 넘어가지 않고 해결책이 담긴 오류를 냅니다.
+
+## 30초 훑어보기
+
+```ts
+const db = powder(await Client.connect("app.db"));
+
+// 초보자 문법 — 읽히는 대로 동작합니다
+const u = await db.users.find(1);
+const top = await db.users.where("score", ">=", 5).orderBy("score", "desc").limit(10).all();
+const page = await db.users.orderBy("id").paginate(1, 20);
+
+// 관계는 N+1 없이 (레벨당 배치 IN 1쿼리)
+const posts = await db.posts.findMany({ include: { user: true } });
+
+// 나만의 메서드 붙이기
+const xdb = db.$extend({
+  posts: { async byUser(this: PowderTable<Posts>, id: number) {
+    return this.where({ user_id: id }).all();
+  }},
+});
+await xdb.posts.byUser(1);
+```
+
+<Cards>
+  <Card title="빠른 시작" href="/ko/docs/quickstart" description="powder new부터 첫 쿼리까지 5분" />
+  <Card title="ORM 가이드" href="/ko/docs/orm" description="CRUD, 관계, Finder, $extend" />
+  <Card title="언어 바인딩" href="/ko/docs/bindings" description="TS · Python · Kotlin · Java · Go · C · C++ · C# · Rust" />
+  <Card title="데이터베이스" href="/ko/docs/databases" description="SQLite · PostgreSQL · MySQL · SQL Server · libSQL · CockroachDB" />
+</Cards>
+
+## 지원 범위 한눈에
+
+| | |
+|---|---|
+| 언어 | TypeScript/Node, Python, Rust, Java, Kotlin, Go, C, C++, C# |
+| 데이터베이스 | SQLite(기본), PostgreSQL, MySQL/MariaDB, SQL Server, libSQL, CockroachDB — 런타임+마이그레이션 |
+| 콜드 쿼리 | 3~4ms @ 200k행 (node:sqlite 대비 ~25×) |
+| 반복 쿼리(캐시) | 0.02~0.03ms |
+
+## 보안 — SQL 인젝션을 구조적으로 차단
+
+인젝션 방어는 옵션이 아니라 엔진의 기본 동작입니다. 모든 언어 바인딩이
+같은 Rust 코어를 거치므로 아래 규칙이 어디서나 동일하게 적용됩니다.
+
+1. **값은 절대 SQL 텍스트에 들어가지 않습니다** — 모든 값은 `?` 바인딩
+   파라미터로 전송됩니다 (Postgres에선 `$n`, SQL Server에선 `@Pn`으로 엔진이
+   변환). ORM이 만드는 쿼리는 예외 없이 이 경로를 탑니다.
+2. **식별자는 화이트리스트 검증** — 테이블·컬럼 이름은 스키마 파싱 시점에
+   `[A-Za-z_][A-Za-z0-9_]*`를 강제하고, ORM은 스키마에 없는 컬럼·테이블·관계
+   이름을 오류로 거부합니다. 사용자 입력이 식별자 자리에 끼어들 통로가
+   없습니다.
+3. **스택 문장 가드** — `query()`와 파라미터가 있는 `execute()`는 단일
+   문장만 허용합니다. 앱이 실수로 문자열을 이어붙였더라도
+   `'; DROP TABLE users; --` 류의 두 번째 문장은 어떤 백엔드에도 도달하기
+   전에 `SQL-injection guard` 오류로 거부됩니다 (문자열 리터럴·주석 속 `;`는
+   정상 통과). 신뢰된 DDL/시드 스크립트는 파라미터 없는 `execute()`로
+   실행하세요 — 그 경로만 다중 문장을 허용합니다.
+4. **전량 파괴 방지** — `where` 없는 `delete()`/`update()`는 오류입니다.
+   전체 삭제는 `deleteAll()`처럼 명시적으로만 가능합니다.

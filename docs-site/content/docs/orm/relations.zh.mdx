@@ -1,0 +1,65 @@
+---
+title: 关系与 include
+description: 由外键派生的关系、无 N+1 的加载、嵌套 include
+---
+
+schema 中的外键即代表关系。声明 `user_id → users(id)` 后，
+会自动生成 `posts.user`(belongsTo)与 `users.posts`(hasMany)。
+
+```json
+"posts": {
+  "columns": {
+    "id":      { "type": "int", "primaryKey": true },
+    "user_id": { "type": "int", "references": { "table": "users", "column": "id" } },
+    "title":   { "type": "text" }
+  }
+}
+```
+
+## 删除与外键约束
+
+Powder 只“声明”外键——不会为任何方言生成 `ON DELETE CASCADE`/`SET
+NULL`，`delete()`/`deleteAll()` 也只是普通的 `DELETE FROM` 语句，因此也
+没有应用层级的级联删除。删除一个仍有子行的父行时：
+
+- **PostgreSQL/MySQL**：默认强制外键约束，数据库会立即报错。
+- **SQLite**：外键约束是按连接设置的（`PRAGMA foreign_keys`），默认是
+  关闭的——`migrate` 内部会打开它，但应用自己建立的连接不会。如果不
+  手动开启，删除父行会静默成功，留下孤立的子行。如果需要，请在连接后
+  自行执行 `PRAGMA foreign_keys = ON`。
+
+## include — 批量加载 (无 N+1)
+
+```ts
+// 每个关系层级只执行 1 次批量 IN 查询
+const posts = await db.posts.findMany({ include: { user: true } });
+posts[0].user?.name;
+
+// 嵌套 include — 每一层都是 1 次批量查询
+const deep = await db.posts.findMany({
+  include: { user: { include: { posts: true } } },
+});
+```
+
+关系名会因生成的 `*Include` 类型而获得自动补全，拼写错误会成为编译
+错误。
+
+## join — 单次查询水合
+
+`belongsTo` 关系可以通过一次 LEFT JOIN 加载:
+
+```ts
+const posts = await db.posts.findMany({ join: { user: true } });
+```
+
+在 `hasMany` 上使用 join 会导致父行重复，因此会明确报错 ——
+这种情况请使用 `include`。
+
+## 复合键
+
+支持复合主键(多个列的 `primaryKey: true`)以及复合外键(表级
+`foreignKeys`)。关系匹配以键元组为单位进行。
+
+```ts
+await db.grades.find({ student: 1, course: "math" });   // 复合 PK 查询
+```

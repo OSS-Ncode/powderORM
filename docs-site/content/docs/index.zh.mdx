@@ -1,0 +1,77 @@
+---
+title: Powder 简介
+description: 基于 Rust 核心的零拷贝多平台 ORM
+---
+
+**Powder** 是一个统一的数据访问层：一个 Rust 核心，为 9 种语言提供绑定。
+查询结果以 Arrow 风格的列式缓冲区（**PCB**）跨越语言边界传递，从而消除了
+逐对象转换的开销——并且单一的 schema 文件即可派生出 typed 模型、迁移
+（migration）与校验。
+
+## 为什么选择 Powder
+
+- **速度快** —— 在全部五种语言的基准测试中，都比该语言的原生 SQL 驱动更快。
+  因为传输的是一次性的列式缓冲区，而不是逐行的 FFI 往返。
+- **一个核心，一份 bug** —— TS、Python、Kotlin 的 ORM 以及所有驱动都共享
+  同一个 Rust 引擎。
+- **schema 即真相** —— 一个 `powder.schema.json` 即可生成 DDL、迁移、
+  漂移校验（构建门禁）、typed 模型、关系（relation）与命名查询。
+- **诚实地失败** —— 无法映射的类型、可能清空整张表的 delete、错误的
+  占位符：都不会悄悄放过，而是给出附带解决方案的错误信息。
+
+## 30 秒速览
+
+```ts
+const db = powder(await Client.connect("app.db"));
+
+// 新手友好语法 —— 所见即所得
+const u = await db.users.find(1);
+const top = await db.users.where("score", ">=", 5).orderBy("score", "desc").limit(10).all();
+const page = await db.users.orderBy("id").paginate(1, 20);
+
+// 关系查询，无 N+1（每层一次批量 IN 查询）
+const posts = await db.posts.findMany({ include: { user: true } });
+
+// 挂载自定义方法
+const xdb = db.$extend({
+  posts: { async byUser(this: PowderTable<Posts>, id: number) {
+    return this.where({ user_id: id }).all();
+  }},
+});
+await xdb.posts.byUser(1);
+```
+
+<Cards>
+  <Card title="快速开始" href="/zh/docs/quickstart" description="从 powder new 到第一次查询，只需 5 分钟" />
+  <Card title="ORM 指南" href="/zh/docs/orm" description="CRUD、关系、Finder、$extend" />
+  <Card title="语言绑定" href="/zh/docs/bindings" description="TS · Python · Kotlin · Java · Go · C · C++ · C# · Rust" />
+  <Card title="数据库" href="/zh/docs/databases" description="SQLite · PostgreSQL · MySQL · SQL Server · libSQL · CockroachDB" />
+</Cards>
+
+## 支持范围一览
+
+| | |
+|---|---|
+| 语言 | TypeScript/Node、Python、Rust、Java、Kotlin、Go、C、C++、C# |
+| 数据库 | SQLite（默认）、PostgreSQL、MySQL/MariaDB、SQL Server、libSQL、CockroachDB —— 运行时 + 迁移 |
+| 冷查询 | 3~4ms @ 20 万行（相比 node:sqlite 快约 25 倍） |
+| 重复查询（缓存） | 0.02~0.03ms |
+
+## 安全 —— 从结构上阻断 SQL 注入
+
+注入防御是引擎的默认行为,而非可选项。所有语言绑定都经过同一个 Rust
+内核,因此以下规则在任何地方都同样适用。
+
+1. **值永远不会进入 SQL 文本** —— 所有值都作为 `?` 绑定参数传输
+   （在 Postgres 上引擎转换为 `$n`,在 SQL Server 上转换为 `@Pn`）。
+   ORM 生成的每条查询都无一例外地走这条路径。
+2. **标识符白名单校验** —— 表名、列名在解析模式文件时强制满足
+   `[A-Za-z_][A-Za-z0-9_]*`,ORM 会拒绝模式中不存在的列、表、关系名。
+   用户输入没有任何途径进入标识符位置。
+3. **堆叠语句防护** —— `query()` 和带参数的 `execute()` 只接受单条语句。
+   即使应用不小心拼接了字符串,`'; DROP TABLE users; --` 这类第二条语句
+   也会在到达任何后端之前被 `SQL-injection guard` 错误拒绝（字符串字面量
+   和注释中的 `;` 正常通过）。可信的 DDL/种子脚本请使用无参数的
+   `execute()` —— 只有这条路径允许多条语句。
+4. **防止整表误毁** —— 没有 `where` 的 `delete()`/`update()` 会报错;
+   清空整表只能通过显式的 `deleteAll()`。

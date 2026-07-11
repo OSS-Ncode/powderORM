@@ -1,0 +1,45 @@
+---
+title: 聚合与 groupBy
+description: count · sum · avg · groupBy · having
+---
+
+对整个集合的标量聚合位于 Finder 中 (`sum`/`avg`/`min`/`max`/`count`)。
+按组聚合则使用 `groupBy` —— 返回的是平面行而非模型。
+
+```ts
+const rows = await db.orders.groupBy({
+  by: ["user_id"],
+  where: { amount: { gt: 0 } },   // 原有 WHERE (包含 OR/嵌套) 照常生效
+  count: true,                    // → _count
+  sum: ["amount"],                // → _sum_amount
+  having: { _sum_amount: { gt: 100 } },
+  orderBy: { _sum_amount: "desc" },
+});
+// [{ user_id: 1, _count: 12, _sum_amount: 340.5 }, ...]
+```
+
+- 别名: `_count`、`_sum_<列名>`、`_avg_<列名>`、`_min_<列名>`、`_max_<列名>`。
+- `having` 对聚合结果进行过滤 (`eq ne gt gte lt lte`)。为了保证可移植性，
+  HAVING 渲染为聚合表达式(`SUM("amount") > ?`)而非别名。
+- `orderBy` 可以按别名或分组列排序。
+- 更复杂的场景(窗口函数、CTE)请使用原始的 `db.query()`或
+  [命名查询](/zh/docs/orm/queries-transactions)。
+
+## 在其他语言中同样适用
+
+别名与返回结构完全一致。
+
+```python
+rows = await db.orders.group_by(
+    by=["user_id"], count=True, sum=["amount"],
+    having={"_sum_amount": {"gt": 100}}, order_by={"_sum_amount": "desc"},
+)  # list[dict]
+```
+
+```kotlin
+db.from("orders").groupBy(
+    by = listOf("user_id"), count = true, sum = listOf("amount"),
+    having = mapOf("_sum_amount" to (">" to 100.0)),
+    orderBy = mapOf("_sum_amount" to Order.DESC),
+)  // List<Map<String, Any?>>
+```

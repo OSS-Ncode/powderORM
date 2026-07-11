@@ -1,0 +1,82 @@
+---
+title: Powder 紹介
+description: Rustコアによるzero-copyマルチプラットフォームORM
+---
+
+**Powder**は、1つのRustコアの上に9言語のバインディングを載せた統合データ
+アクセスレイヤーです。クエリ結果をArrowスタイルのカラムバッファ（**PCB**）
+として転送することで言語境界をまたぐオブジェクト変換コストをなくし、
+1つのスキーマファイルからtypedモデルとマイグレーション・検証を導出します。
+
+## なぜPowderなのか
+
+- **速い** — 5言語すべてのベンチマークで、その言語のraw SQLドライバより
+  高速です。行単位のFFI往復ではなく、カラムバッファを1回転送するだけだから
+  です。
+- **1つのコア、1つのバグ** — TS/Python/Kotlin ORMとすべてのドライバが同じ
+  Rustエンジンを共有します。
+- **スキーマこそが真実** — `powder.schema.json`一つから、DDL、
+  マイグレーション、ドリフト検証（ビルドゲート）、typedモデル、リレーション、
+  名前付きクエリが生成されます。
+- **正直に失敗する** — マッピングできない型、全行を消しかねないdelete、
+  不正なプレースホルダーは黙って通過せず、解決策付きのエラーを返します。
+
+## 30秒で分かる概要
+
+```ts
+const db = powder(await Client.connect("app.db"));
+
+// 初心者向け構文 — 読んだ通りに動きます
+const u = await db.users.find(1);
+const top = await db.users.where("score", ">=", 5).orderBy("score", "desc").limit(10).all();
+const page = await db.users.orderBy("id").paginate(1, 20);
+
+// リレーションはN+1なし（レベルごとにバッチINを1クエリ）
+const posts = await db.posts.findMany({ include: { user: true } });
+
+// 独自のメソッドを追加
+const xdb = db.$extend({
+  posts: { async byUser(this: PowderTable<Posts>, id: number) {
+    return this.where({ user_id: id }).all();
+  }},
+});
+await xdb.posts.byUser(1);
+```
+
+<Cards>
+  <Card title="クイックスタート" href="/ja/docs/quickstart" description="powder newから最初のクエリまで5分" />
+  <Card title="ORMガイド" href="/ja/docs/orm" description="CRUD、リレーション、Finder、$extend" />
+  <Card title="言語バインディング" href="/ja/docs/bindings" description="TS · Python · Kotlin · Java · Go · C · C++ · C# · Rust" />
+  <Card title="データベース" href="/ja/docs/databases" description="SQLite · PostgreSQL · MySQL · SQL Server · libSQL · CockroachDB" />
+</Cards>
+
+## サポート範囲一覧
+
+| | |
+|---|---|
+| 言語 | TypeScript/Node, Python, Rust, Java, Kotlin, Go, C, C++, C# |
+| データベース | SQLite（デフォルト）, PostgreSQL, MySQL/MariaDB, SQL Server, libSQL, CockroachDB — ランタイム+マイグレーション |
+| コールドクエリ | 3〜4ms @ 20万行（node:sqlite比 約25倍） |
+| 反復クエリ（キャッシュ） | 0.02〜0.03ms |
+
+## セキュリティ — SQLインジェクションを構造的に遮断
+
+インジェクション対策はオプションではなくエンジンの既定動作です。すべての
+言語バインディングが同じRustコアを通るため、以下のルールがどこでも同一に
+適用されます。
+
+1. **値はSQLテキストに一切入りません** — すべての値は`?`バインド
+   パラメータとして渡されます（Postgresでは`$n`、SQL Serverでは`@Pn`に
+   エンジンが変換）。ORMが生成するクエリは例外なくこの経路を通ります。
+2. **識別子はホワイトリスト検証** — テーブル・カラム名はスキーマ解析時に
+   `[A-Za-z_][A-Za-z0-9_]*`を強制し、ORMはスキーマにないカラム・テーブル・
+   リレーション名をエラーとして拒否します。ユーザー入力が識別子の位置に
+   入り込む経路はありません。
+3. **スタック文ガード** — `query()`とパラメータ付き`execute()`は単一文のみ
+   受け付けます。アプリが誤って文字列連結をしても、`'; DROP TABLE users; --`
+   のような2つ目の文はどのバックエンドにも届く前に`SQL-injection guard`
+   エラーで拒否されます（文字列リテラル・コメント内の`;`は正常に通過）。
+   信頼できるDDL/シードスクリプトはパラメータなしの`execute()`で —
+   複数文を許すのはその経路だけです。
+4. **全件破壊の防止** — `where`のない`delete()`/`update()`はエラーです。
+   全削除は`deleteAll()`のように明示的にのみ可能です。

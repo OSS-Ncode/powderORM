@@ -1,0 +1,76 @@
+---
+title: 빠른 시작
+description: powder new부터 첫 쿼리까지
+---
+
+## 1. 프로젝트 만들기
+
+```bash
+powder new my-app && cd my-app
+npm install
+```
+
+`powder new`가 만들어 주는 것: `powder.schema.json`(+ 에디터 자동완성용 JSON
+Schema), 시드 데이터, tsconfig, 데모 `src/main.ts`, 생성된 typed 모델.
+
+## 2. 스키마 → 데이터베이스
+
+```bash
+npm run migrate     # CREATE TABLE (FK 의존 순서)
+npm run seed        # seed.json 적재
+npm run generate    # src/models.ts 재생성 (AOT 쿼리 컴파일)
+```
+
+`powder.schema.json`을 열면 VS Code가 테이블/컬럼/타입을 자동완성해 줍니다.
+
+```json
+{
+  "$schema": "./powder.schema.schema.json",
+  "tables": {
+    "users": {
+      "columns": {
+        "id":     { "type": "int",   "primaryKey": true },
+        "name":   { "type": "text" },
+        "score":  { "type": "float", "nullable": true },
+        "active": { "type": "bool" }
+      }
+    }
+  }
+}
+```
+
+## 3. 첫 쿼리
+
+```ts
+import { Client } from "@powder/node";
+import { powder } from "./models.js";
+
+const db = powder(await Client.connect("app.db"));
+
+await db.users.create({ id: 1, name: "alice", score: 9.5, active: true });
+
+const alice = await db.users.find(1);
+const top = await db.users
+  .where("score", ">=", 5)      // 3-인자 형태
+  .orderBy("score", "desc")
+  .limit(10)
+  .all();
+```
+
+## 4. 빌드 게이트
+
+스키마와 DB가 어긋나면 빌드를 멈추게 하세요:
+
+```bash
+powder validate --db app.db && tsc
+```
+
+드리프트가 있으면 `mismatch: ...` 목록과 함께 exit 1이 됩니다.
+
+## 스키마를 바꿨다면
+
+```bash
+powder migrate --db app.db              # 가산적 (테이블/컬럼 추가)
+powder migrate --db app.db --rebuild    # 파괴적 변경까지 (데이터 보존, SQLite)
+npm run generate                        # 모델 재생성
+```

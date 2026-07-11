@@ -1,0 +1,42 @@
+---
+title: 언어 가이드
+description: 9개 언어, 같은 엔진, 같은 컬럼 버퍼
+---
+
+Powder는 언어마다 다시 구현하지 않아요. 9개 바인딩이 **같은 Rust 코어**와
+**같은 PCB 와이어 포맷**을 공유합니다. 그래서 어느 언어에서든 표면이 똑같아요:
+
+```
+connect(url) → execute / query → 타입별 컬럼 읽기 → transaction(중첩=세이브포인트)
+```
+
+아래 표에서 내 언어를 고르고, 해당 페이지로 바로 가세요.
+
+| 언어 | 연결 방식 | ORM 수준 |
+|---|---|---|
+| [TypeScript / Node](/ko/docs/bindings/typescript) | napi-rs, 외부 버퍼 zero-copy | ✅ 전체 (코드젠 typed 모델) |
+| [Python](/ko/docs/bindings/python) | PyO3 | ✅ 전체 (코드젠 typed 모델) |
+| [Rust](/ko/docs/bindings/rust) | 코어 직접 | ✅ 전체 (`powder_core::orm`) |
+| [Java](/ko/docs/bindings/java) | JNI (`queryDirect()` 무복사) | ✅ 전체 (`db.orm(schema)`) |
+| [Kotlin](/ko/docs/bindings/kotlin) | Java 위 관용 래퍼 | ✅ 전체 (`db.orm(schema)`) + DSL |
+| [Go](/ko/docs/bindings/go) | C ABI (Windows는 cgo 불필요) | ✅ 전체 (`db.Orm(schema)`) |
+| [C](/ko/docs/bindings/c) | 안정 C ABI | ✅ 전체 (JSON op API) |
+| [C++](/ko/docs/bindings/cpp) | 헤더 하나, RAII | ✅ 전체 (`powder::Orm`) |
+| [C#](/ko/docs/bindings/csharp) | P/Invoke | ✅ 전체 (`db.Orm(schema)`) |
+
+**모든 언어가 ORM을 완전 지원해요.** TS·Python은 `powder generate`의 typed
+모델(정적 타입 + AOT SQL)로, 나머지 7개 언어는 Rust 코어에 한 번 구현된
+**공유 ORM 엔진**으로 — `findMany`/`create`/`update`/`delete`/`count`/
+`aggregate`/`groupBy`(+having), 중첩 `AND`/`OR`/`NOT` where,
+`include`/`join` 관계 로드까지 문법과 의미가 언어와 무관하게 동일합니다.
+
+## 공통 규칙
+
+- **값은 언제나 `?` 바인딩** — SQL 텍스트에 값이 직접 들어가는 일은 없어요.
+  식별자(테이블·컬럼)는 정규식 검증을 거칩니다. 인젝션이 구조적으로 막혀요.
+- **결과는 PCB 컬럼 버퍼로 1회 전송** — 각 언어 리더가 그 버퍼 위에 뷰를
+  만들어 읽습니다. 행마다 FFI를 왕복하지 않아 빠릅니다.
+- **`where()` 없는 `update`/`delete`는 거부** — 전체 테이블 변경은
+  `updateAll()`/`deleteAll()`처럼 명시해야 합니다.
+
+각 바인딩의 빌드·테스트 방법은 저장소의 `bindings/*/README.md`에 있어요.

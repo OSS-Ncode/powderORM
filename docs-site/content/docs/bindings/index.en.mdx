@@ -1,0 +1,44 @@
+---
+title: Language guides
+description: 9 languages, one engine, one column buffer
+---
+
+Powder isn't reimplemented per language. All 9 bindings share the **same Rust
+core** and the **same PCB wire format**, so the surface looks identical
+everywhere:
+
+```
+connect(url) → execute / query → typed column reads → transaction (nested = savepoint)
+```
+
+Pick your language below and jump straight to its page.
+
+| Language | How it connects | ORM level |
+|---|---|---|
+| [TypeScript / Node](/en/docs/bindings/typescript) | napi-rs, external-buffer zero-copy | ✅ full (codegen typed models) |
+| [Python](/en/docs/bindings/python) | PyO3 | ✅ full (codegen typed models) |
+| [Rust](/en/docs/bindings/rust) | core, directly | ✅ full (`powder_core::orm`) |
+| [Java](/en/docs/bindings/java) | JNI (`queryDirect()` copy-free) | ✅ full (`db.orm(schema)`) |
+| [Kotlin](/en/docs/bindings/kotlin) | idiomatic wrapper over Java | ✅ full (`db.orm(schema)`) + DSL |
+| [Go](/en/docs/bindings/go) | C ABI (no cgo on Windows) | ✅ full (`db.Orm(schema)`) |
+| [C](/en/docs/bindings/c) | stable C ABI | ✅ full (JSON op API) |
+| [C++](/en/docs/bindings/cpp) | one header, RAII | ✅ full (`powder::Orm`) |
+| [C#](/en/docs/bindings/csharp) | P/Invoke | ✅ full (`db.Orm(schema)`) |
+
+**Every language gets the full ORM.** TS and Python use `powder generate`'s
+typed models (static types + AOT SQL); the other seven share one **ORM engine
+implemented once in the Rust core** — `findMany`/`create`/`update`/`delete`/
+`count`/`aggregate`/`groupBy` (+having), nested `AND`/`OR`/`NOT` where, and
+`include`/`join` relation loading behave identically regardless of language.
+
+## Shared rules
+
+- **Values are always `?` binds** — a value never lands in SQL text. Identifiers
+  (tables, columns) go through regex validation. Injection is blocked structurally.
+- **Results ship as one PCB column buffer** — each language's reader builds a
+  view over it. No per-row FFI round trip, so it's fast.
+- **`update`/`delete` without `where` is rejected** — a whole-table change must
+  be explicit, like `updateAll()` / `deleteAll()`.
+
+Build and test instructions for each binding live in the repo's
+`bindings/*/README.md`.

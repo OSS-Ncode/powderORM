@@ -1,0 +1,69 @@
+---
+title: Relations and include
+description: relations derived from FKs, N+1-free loading, nested include
+---
+
+A foreign key in your schema is a relation. Declare `user_id → users(id)` and
+you get `posts.user` (belongsTo) and `users.posts` (hasMany) automatically.
+
+```json
+"posts": {
+  "columns": {
+    "id":      { "type": "int", "primaryKey": true },
+    "user_id": { "type": "int", "references": { "table": "users", "column": "id" } },
+    "title":   { "type": "text" }
+  }
+}
+```
+
+## Deletes and FK constraints
+
+Powder only *declares* FKs — it never emits `ON DELETE CASCADE`/`SET NULL`
+for any dialect, and `delete()`/`deleteAll()` are plain `DELETE FROM`
+statements, so there's no application-level cascade either. Deleting a
+parent row that still has children:
+
+- **PostgreSQL/MySQL**: FKs are enforced by default, so the database raises
+  an error immediately.
+- **SQLite**: FK enforcement is a per-connection setting (`PRAGMA
+  foreign_keys`) and is off by default — `migrate` turns it on internally,
+  but a connection your app opens does not. Without it, deleting the parent
+  succeeds silently and leaves the children orphaned. Run `PRAGMA
+  foreign_keys = ON` yourself right after connecting if you need it.
+
+## include — batch loading (no N+1)
+
+```ts
+// one batched IN query per relation level
+const posts = await db.posts.findMany({ include: { user: true } });
+posts[0].user?.name;
+
+// nested include — one batched query per level
+const deep = await db.posts.findMany({
+  include: { user: { include: { posts: true } } },
+});
+```
+
+Relation names autocomplete via the generated `*Include` types, and typos are
+compile errors.
+
+## join — single-query hydration
+
+A `belongsTo` relation can be hydrated with a single LEFT JOIN:
+
+```ts
+const posts = await db.posts.findMany({ join: { user: true } });
+```
+
+Using `join` on a `hasMany` would multiply parent rows, so it raises an
+explicit error — use `include` there instead.
+
+## Composite keys
+
+Composite primary keys (`primaryKey: true` on multiple columns) and composite
+foreign keys (table-level `foreignKeys`) are supported. Relation matching
+happens per key tuple.
+
+```ts
+await db.grades.find({ student: 1, course: "math" });   // composite PK lookup
+```

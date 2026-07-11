@@ -1,0 +1,60 @@
+---
+title: PostgreSQL
+description: 런타임·마이그레이션 완전 지원, 자리표시자 자동 변환
+---
+
+PostgreSQL은 런타임 쿼리와 마이그레이션을 완전히 지원해요. SQLite에서
+쓰던 코드를 그대로 두고 연결 문자열만 바꾸면 됩니다.
+
+## 연결
+
+```
+postgres://user:pass@host:5432/dbname
+```
+
+## 자리표시자는 그대로 `?`
+
+Postgres는 원래 `$1, $2` 문법을 쓰지만, Powder 엔진이 `?`를 `$n`으로 **자동
+변환**해줘요. 문자열 리터럴·주석·`::` 캐스트 안의 `?`는 건드리지 않습니다.
+
+```sql
+SELECT * FROM users WHERE score >= ? AND name LIKE ?
+-- 엔진이 내부적으로 $1, $2 로 변환
+```
+
+## 타입 매핑 주의
+
+매핑 밖의 타입은 조용히 틀리게 디코드하지 않고 **안내 오류**를 냅니다.
+
+```
+Postgres NUMERIC 컬럼 → "col::text 로 캐스트하세요" 오류
+```
+
+이럴 땐 쿼리에서 명시적으로 캐스트하세요:
+
+```sql
+SELECT amount::text FROM orders
+```
+
+## 결과 캐시 없음
+
+Postgres는 다른 클라이언트의 쓰기를 Powder가 감지할 수 없어 결과 캐시를
+끕니다(정확성 우선). SQLite 전용 최적화예요.
+
+## DDL / 마이그레이션
+
+```bash
+powder ddl --dialect postgres          # CREATE TABLE 출력
+powder migrate --db postgres://...     # pg_catalog introspection → 필요한 DDL만 적용
+```
+
+타입 매핑: `int → BIGINT`, `float → DOUBLE PRECISION`, `text → TEXT`,
+`bool → BOOLEAN`.
+
+## 서버로 검증
+
+```bash
+POWDER_PG_URL=postgres://... cargo test -p powder-core --features postgres
+```
+
+환경변수가 없으면 해당 테스트는 스킵돼서 CI가 깨지지 않아요.

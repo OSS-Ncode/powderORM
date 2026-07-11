@@ -1,0 +1,17 @@
+{
+  "title": "Powder",
+  "pages": [
+    "---Getting started---",
+    "index",
+    "quickstart",
+    "schema",
+    "cli",
+    "performance",
+    "---ORM---",
+    "orm",
+    "---Language guides---",
+    "bindings",
+    "---Databases---",
+    "databases"
+  ]
+}

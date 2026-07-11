@@ -1,0 +1,79 @@
+---
+title: TypeScript / Node
+description: napi-rs binding + full-codegen ORM
+---
+
+TypeScript is Powder's most complete binding. `powder generate` derives typed
+models from `powder.schema.json`, and the runtime reads external buffers
+zero-copy over napi-rs.
+
+## Install
+
+```bash
+powder new my-app && cd my-app
+npm install
+```
+
+Already have a project? Just the driver:
+
+```bash
+npm install @powder/node
+```
+
+## Connect → query
+
+```ts
+import { Client } from "@powder/node";
+import { powder } from "./models.js";   // produced by powder generate
+
+const db = powder(await Client.connect("app.db"));
+
+await db.users.create({ id: 1, name: "alice", score: 9.5, active: true });
+
+// beginner-friendly chaining — reads like it runs
+const top = await db.users
+  .where("score", ">=", 5)
+  .orderBy("score", "desc")
+  .limit(10)
+  .all();
+
+// options-object form — same engine, more explicit
+const rows = await db.users.findMany({
+  where: { active: true, score: { gte: 5 } },
+  orderBy: { score: "desc" },
+  limit: 10,
+});
+```
+
+## Relations (no N+1)
+
+```ts
+// loaded with one batched IN per level
+const posts = await db.posts.findMany({ include: { user: true } });
+```
+
+## Transactions
+
+```ts
+await db.$transaction(async (tx) => {
+  await tx.users.create({ id: 2, name: "bob" });
+  // return to COMMIT, throw to ROLLBACK. Nested = savepoint.
+});
+```
+
+## Attach your own methods — `$extend`
+
+```ts
+const xdb = db.$extend({
+  posts: {
+    async byUser(this: PowderTable<Posts>, id: number) {
+      return this.where({ user_id: id }).all();
+    },
+  },
+});
+await xdb.posts.byUser(1);
+```
+
+For the full story see the [ORM guide](/en/docs/orm). On error you get the failing
+SQL and the caller location (`file:line:col`) — click it in the terminal to
+jump to the line.

@@ -1,0 +1,59 @@
+---
+title: 명명 쿼리와 트랜잭션
+description: 스키마에 SQL을 선언하고 typed 메서드로 호출
+---
+
+## 명명 쿼리 (커스텀 SQL)
+
+복잡한 SQL은 스키마의 `queries` 섹션에 선언하세요. `powder generate`가
+`:이름` 자리표시자를 **생성 시점에** 위치 바인딩으로 컴파일하고 typed
+메서드를 만듭니다.
+
+```json
+"queries": {
+  "topUsers": {
+    "sql": "SELECT id, name, score, active FROM users WHERE active = :active AND score >= :minScore ORDER BY score DESC",
+    "params": { "active": "bool", "minScore": "float" },
+    "returns": "users"
+  }
+}
+```
+
+```ts
+const rows = await db.$queries.topUsers({ active: true, minScore: 5 });
+// rows: Users[]  (returns가 지정된 경우 typed)
+```
+
+```python
+rows = await db.queries.top_users(active=True, min_score=5)
+```
+
+검증은 생성 시점에 끝납니다: 선언 안 된 자리표시자, 안 쓰인 파라미터,
+존재하지 않는 `returns` 테이블은 `powder generate`가 거부합니다. 문자열
+리터럴 속 `:x`와 `::` 캐스트는 건드리지 않습니다.
+
+## 트랜잭션
+
+반환하면 COMMIT, 던지면 ROLLBACK. 중첩 호출은 SAVEPOINT라 안쪽 실패가
+바깥 작업을 지우지 않습니다.
+
+```ts
+await db.$transaction(async (tx) => {
+  await tx.users.create({ id: 3, name: "carol", score: 7.5, active: true });
+  await tx.posts.create({ id: 9, user_id: 3, title: "hi" });
+
+  try {
+    await tx.$transaction(async (inner) => {
+      await inner.posts.create({ id: 10, user_id: 3, title: "oops" });
+      throw new Error("취소");        // ← 이 insert만 롤백
+    });
+  } catch {}
+});
+```
+
+```python
+async with db.transaction():
+    await db.users.create({"id": 3, "name": "carol", "score": 7.5, "active": True})
+```
+
+같은 의미가 Kotlin(`db.transaction { }`), Java, Go, C++, C#에도 있습니다.

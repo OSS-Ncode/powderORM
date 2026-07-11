@@ -1,0 +1,55 @@
+---
+title: Python
+description: PyO3バインディング + コードジェン完全ORM
+---
+
+PythonバインディングはPyO3でRustコアをラップし、TS ORMをそのままミラーリングします。
+メソッド名だけがPythonらしいsnake_caseです(`find_many`、`order_by`)。
+
+## インストール
+
+```bash
+pip install powder
+powder generate --py        # powder_models.pyを生成
+```
+
+## 接続 → クエリ
+
+```python
+from powder import connect
+from powder_models import powder          # powder generate --pyの結果
+
+db = powder(await connect("sqlite::memory:"))
+
+await db.users.create({"id": 1, "name": "alice", "score": 9.5, "active": True})
+
+top = await db.users.find_many(
+    where={"score": {"gte": 5}},
+    order_by={"id": "asc"},
+    limit=10,
+)
+```
+
+where演算子はTSと同じです。`eq ne gt gte lt lte like in`。
+`None`は`IS NULL`、`{"ne": None}`は`IS NOT NULL`、`{"in": []}`は常に偽。
+
+## リレーション
+
+```python
+posts = await db.posts.find_many(include={"user": True})   # レベルごとにバッチIN 1クエリ
+```
+
+## トランザクション
+
+```python
+async with db.transaction():
+    await db.users.create({"id": 2, "name": "bob"})
+    # ブロックが正常終了すればCOMMIT、例外時はROLLBACK。ネストはセーブポイント。
+```
+
+ブロック内でもモデルへのアクセスは`db.<テーブル>`のままです — コンテキスト
+マネージャが返すのは低レベルドライバの`Client`で、モデルラッパーはありません。
+
+エラーは`PowderError`でラップされ、失敗したSQLと呼び出し元の位置(`file:line`)が
+付きます。AOTコードジェンのおかげで、ランタイムはクエリを再パースせず断片を
+つなぎ合わせるだけです。

@@ -1,0 +1,82 @@
+---
+title: Introducing Powder
+description: A zero-copy, multi-platform ORM built on a Rust core
+---
+
+**Powder** is a unified data-access layer: one Rust core with bindings for 9
+languages. Query results cross the language boundary as an Arrow-style column
+buffer (**PCB**), so there's no per-object conversion tax — and a single schema
+file derives your typed models, migrations, and validation.
+
+## Why Powder
+
+- **It's fast** — faster than that language's raw SQL driver in all five
+  language benchmarks. You send one column buffer instead of a per-row FFI
+  round trip.
+- **One core, one bug** — the TS, Python, and Kotlin ORMs and every driver
+  share the same Rust engine.
+- **The schema is the truth** — a single `powder.schema.json` produces DDL,
+  migrations, drift validation (a build gate), typed models, relations, and
+  named queries.
+- **Fails honestly** — unmappable types, a delete about to wipe every row, a
+  bad placeholder: none pass silently. You get an error with the fix in it.
+
+## A 30-second look
+
+```ts
+const db = powder(await Client.connect("app.db"));
+
+// Beginner-friendly syntax — it does what it reads like
+const u = await db.users.find(1);
+const top = await db.users.where("score", ">=", 5).orderBy("score", "desc").limit(10).all();
+const page = await db.users.orderBy("id").paginate(1, 20);
+
+// Relations, no N+1 (one batched IN per level)
+const posts = await db.posts.findMany({ include: { user: true } });
+
+// Attach your own methods
+const xdb = db.$extend({
+  posts: { async byUser(this: PowderTable<Posts>, id: number) {
+    return this.where({ user_id: id }).all();
+  }},
+});
+await xdb.posts.byUser(1);
+```
+
+<Cards>
+  <Card title="Quickstart" href="/en/docs/quickstart" description="powder new to your first query in 5 minutes" />
+  <Card title="ORM guide" href="/en/docs/orm" description="CRUD, relations, Finder, $extend" />
+  <Card title="Language guides" href="/en/docs/bindings" description="TS · Python · Kotlin · Java · Go · C · C++ · C# · Rust" />
+  <Card title="Databases" href="/en/docs/databases" description="SQLite · PostgreSQL · MySQL · SQL Server · libSQL · CockroachDB" />
+</Cards>
+
+## Support at a glance
+
+| | |
+|---|---|
+| Languages | TypeScript/Node, Python, Rust, Java, Kotlin, Go, C, C++, C# |
+| Databases | SQLite (default), PostgreSQL, MySQL/MariaDB, SQL Server, libSQL, CockroachDB — runtime + migrations |
+| Cold query | 3–4ms @ 200k rows (~25× vs node:sqlite) |
+| Repeat query (cached) | 0.02–0.03ms |
+
+## Security — SQL injection is blocked structurally
+
+Injection defense is engine behavior, not an option. Every language binding
+goes through the same Rust core, so these rules apply identically everywhere.
+
+1. **Values never enter the SQL text** — every value crosses as a `?` bound
+   parameter (translated to `$n` on Postgres and `@Pn` on SQL Server by the
+   engine). Every query the ORM builds takes this path, without exception.
+2. **Identifiers are whitelist-validated** — table and column names must
+   match `[A-Za-z_][A-Za-z0-9_]*` at schema-parse time, and the ORM rejects
+   any column, table, or relation name not in the schema. There is no path
+   for user input to reach an identifier position.
+3. **Stacked-statement guard** — `query()` and parameterized `execute()`
+   accept a single statement only. Even if an application accidentally
+   concatenates strings, a second statement like `'; DROP TABLE users; --`
+   is rejected with an `SQL-injection guard` error before it reaches any
+   backend (`;` inside string literals and comments passes fine). Run
+   trusted DDL/seed scripts through parameterless `execute()` — that is the
+   only path that allows multiple statements.
+4. **No accidental mass destruction** — `delete()`/`update()` without a
+   `where` is an error; clearing a table takes an explicit `deleteAll()`.

@@ -1,0 +1,62 @@
+---
+title: PostgreSQL
+description: full runtime + migrations, automatic placeholder conversion
+---
+
+PostgreSQL has full support for runtime queries and migrations. Keep the code
+you wrote against SQLite and just change the connection string.
+
+## Connecting
+
+```
+postgres://user:pass@host:5432/dbname
+```
+
+## Placeholders stay `?`
+
+Postgres natively uses `$1, $2`, but the Powder engine **converts `?` to `$n`
+automatically**. A `?` inside a string literal, a comment, or a `::` cast is
+left alone.
+
+```sql
+SELECT * FROM users WHERE score >= ? AND name LIKE ?
+-- the engine rewrites to $1, $2 internally
+```
+
+## Type-mapping note
+
+Types outside the mapping aren't decoded wrong silently — you get a **guiding
+error**.
+
+```
+Postgres NUMERIC column → "cast it with col::text" error
+```
+
+Cast explicitly in the query:
+
+```sql
+SELECT amount::text FROM orders
+```
+
+## No result cache
+
+Powder can't detect writes from other clients on Postgres, so the result cache
+is off (correctness first). It's a SQLite-only optimization.
+
+## DDL / migrations
+
+```bash
+powder ddl --dialect postgres          # print CREATE TABLE
+powder migrate --db postgres://...     # pg_catalog introspection → apply only needed DDL
+```
+
+Type mapping: `int → BIGINT`, `float → DOUBLE PRECISION`, `text → TEXT`,
+`bool → BOOLEAN`.
+
+## Verify against a server
+
+```bash
+POWDER_PG_URL=postgres://... cargo test -p powder-core --features postgres
+```
+
+Without the env var those tests are skipped, so CI won't break.

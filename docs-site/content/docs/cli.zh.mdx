@@ -1,0 +1,47 @@
+---
+title: CLI 参考
+description: powder new · init · generate · migrate · validate · seed · ddl
+---
+
+```text
+powder new <dir>       生成新项目脚手架（create-powder-app）
+powder init            生成 powder.schema.json + 编辑器用 JSON Schema
+powder generate        生成 AOT typed 模型（--ts / --py）
+powder ddl             输出 CREATE TABLE 语句（--dialect sqlite|postgres|mysql）
+powder migrate --db    创建表/新增列（增量式；--rebuild 支持破坏性变更）
+powder validate --db   检测 schema↔数据库 漂移 —— 不一致时以 exit 1 退出（构建门禁）
+powder seed --db       加载 .json / .sql 种子数据
+```
+
+数据库 URL：`sqlite::memory:` · `sqlite://path` · 文件路径 ·
+`postgres://user:pass@host/db` · `mysql://user:pass@host/db`
+
+## migrate
+
+通过各后端专属的内省机制（SQLite 的 PRAGMA / Postgres 的 pg_catalog /
+MySQL 的 information_schema）读取当前状态，只应用**该方言对应的** DDL。
+如果已经一致，则显示 `database already up to date`。
+
+`--rebuild`（仅限 SQLite）：通过官方的重建（rebuild）模式，解决删除列、
+修改类型等破坏性漂移问题。保留下来的列的数据会被完整保存。
+
+## validate = 构建门禁
+
+```bash
+powder validate --db app.db && tsc
+```
+
+会对列的存在性/类型/是否可为空/主键顺序（含复合主键）/外键（含复合外键）/
+多余列进行比对，一旦发现不一致，会列出清单并失败退出。将其接入 CI，
+即可在 schema 漂移演变为运行时错误之前拦截它。
+
+## 各方言的类型映射
+
+| schema | sqlite | postgres | mysql |
+|---|---|---|---|
+| int | INTEGER | BIGINT | BIGINT |
+| float | REAL | DOUBLE PRECISION | DOUBLE |
+| text | TEXT | TEXT | TEXT / VARCHAR(255)* |
+| bool | INTEGER | BOOLEAN | TINYINT(1) |
+
+*MySQL 会将作为键成员的 text 渲染为 VARCHAR(255)（因为裸 TEXT 无法建索引）。

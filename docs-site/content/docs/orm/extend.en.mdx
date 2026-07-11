@@ -1,0 +1,69 @@
+---
+title: Your own methods ($extend)
+description: attach custom methods as db.posts.myMethod()
+---
+
+Want to write a helper like `createMany` and call it as `db.posts.whatever()`?
+Use `$extend`. The original client is untouched; you get a new, extended client
+back.
+
+## TypeScript
+
+```ts
+const xdb = db.$extend({
+  users: {
+    // this = that table (compose the built-in API freely)
+    async top(this: PowderTable<Users>, n: number): Promise<Users[]> {
+      return this.orderBy("score", "desc").limit(n).all();
+    },
+    async createManyActive(this: PowderTable<Users>, names: string[]) {
+      return this.createMany(
+        names.map((name, i) => ({ id: 100 + i, name, score: 0, active: true })),
+      );
+    },
+  },
+  posts: {
+    async byUser(this: PowderTable<Posts>, userId: number): Promise<Posts[]> {
+      return this.where({ user_id: userId }).orderBy("id").all();
+    },
+  },
+});
+
+await xdb.users.top(3);          // custom method
+await xdb.users.count();          // built-ins still there
+await xdb.posts.byUser(1);
+```
+
+Types are fully preserved — `xdb.users` is
+`PowderTable<Users> & { top, createManyActive }`.
+
+## Inside transactions too
+
+The client passed into a `$transaction` callback carries the same extensions:
+
+```ts
+await xdb.$transaction(async (tx) => {
+  await tx.users.createManyActive(["a", "b"]);
+  const best = await tx.users.top(1);
+});
+```
+
+## Python
+
+```python
+from powder.orm import extend_powder
+
+async def top(self, n):
+    return await self.order_by("score", "desc").limit(n).all()
+
+xdb = extend_powder(db, {"users": {"top": top}})
+await xdb.users.top(3)
+```
+
+## Rules
+
+- Extending a table name that doesn't exist is an **immediate error** (catches typos).
+- `this` (or `self` in Python) inside a method is the extended table itself —
+  freely compose built-ins with other custom methods.
+- The original `db` is unchanged, so code sharing the pre-extension client is
+  unaffected.

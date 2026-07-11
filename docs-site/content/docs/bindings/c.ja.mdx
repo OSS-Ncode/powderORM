@@ -1,0 +1,73 @@
+---
+title: C
+description: 安定C ABI — すべてのバインディングの土台
+---
+
+`crates/powder-ffi`が安定C ABIをエクスポートします。Go・C#・C++バインディングは
+すべてこの表面の上に乗っています。ヘッダー`powder.h`1つで済みます。
+
+## 使い方
+
+```c
+#include "powder.h"
+
+PowderClient *db = powder_connect("sqlite::memory:");
+powder_execute(db, "CREATE TABLE t (id INTEGER, name TEXT)", NULL);
+powder_execute(db, "INSERT INTO t VALUES (?, ?)", "[1, \"alice\"]");
+
+size_t len;
+unsigned char *pcb = powder_query(db, "SELECT * FROM t", NULL, &len);
+/* pcbはPCBカラムバッファ — フォーマットはdocs/FORMAT.md、デコーダー例はC++ラッパー参照 */
+powder_free_buffer(pcb, len);
+powder_close(db);
+```
+
+## ルール
+
+- **パラメータはJSON配列文字列**として渡します。`"[1, \"a\", true, null]"`。
+  C表面を単純なポインタ・整数に保つための選択です。
+- **エラーはNULL / -1** + `powder_last_error()`(スレッドローカル、borrowed)または
+  `powder_last_error_copy()`で確認します。
+- `powder_query`が渡したバッファは**返却された長さそのまま**`powder_free_buffer`で
+  解放してください。
+
+## ORM
+
+CでもPowder ORMを完全サポートしています — 共有Rustエンジン(`powder_core::orm`)の
+JSON opスペックをそのまま使います。`powder.schema.json`テキストでスキーマハンドルを
+一度作り、演算ごとにJSONオブジェクト1つを渡します。演算・文法はすべての言語と
+同一です。`findMany`/`findFirst`/`create`/`createMany`/`update`/`delete`/
+`deleteAll`/`count`/`exists`/`aggregate`/`groupBy`(+having)、ネストした
+`AND`/`OR`/`NOT` where(`eq ne gt gte lt lte like in`)、`include`/`join`。
+
+```c
+PowderOrmSchema *schema = powder_orm_schema_new(schema_json);
+
+powder_orm_execute(db, schema,
+    "{\"op\":\"create\",\"table\":\"users\","
+    "\"data\":{\"id\":1,\"name\":\"alice\",\"score\":9.5,\"active\":true}}");
+
+size_t len = 0;
+unsigned char *rows = powder_orm_find_json(db, schema,
+    "{\"op\":\"findMany\",\"table\":\"users\","
+    "\"where\":{\"active\":true,\"score\":{\"gte\":5}},"
+    "\"orderBy\":{\"score\":\"desc\"},\"limit\":10}", &len);
+/* rows = UTF-8 JSON配列(lenバイト) */
+powder_free_buffer(rows, len);
+powder_orm_schema_free(schema);
+```
+
+変更/カウントopは`powder_orm_execute`(影響行数、失敗時-1)、行を返す
+opは`powder_orm_find_json`(JSON、`powder_free_buffer`で解放)です。
+
+## ビルド (Windows / MSVC)
+
+```bat
+cargo build -p powder-ffi --release
+cl /W3 /utf-8 test\test_powder.c /I include /link <target>\release\powder_ffi.dll.lib
+```
+
+Unix: `cc test/test_powder.c -Iinclude -lpowder_ffi -L<target>/release`。
+
+PCBを直接デコードするより便利なラッパーが欲しい場合は[C++](/ja/docs/bindings/cpp)
+ヘッダーがRAII + デコーダーを提供します。

@@ -1,0 +1,67 @@
+---
+title: 自定义方法 ($extend)
+description: 以 db.posts.myMethod() 的形式挂载自定义方法
+---
+
+如果想像 `createMany` 这样自己动手实现辅助方法，并以
+`db.posts.任意名称()` 的形式使用，可以用 `$extend`。原始客户端不会
+被修改，而是返回一个扩展后的新客户端。
+
+## TypeScript
+
+```ts
+const xdb = db.$extend({
+  users: {
+    // this = 该表 (可自由组合内置 API)
+    async top(this: PowderTable<Users>, n: number): Promise<Users[]> {
+      return this.orderBy("score", "desc").limit(n).all();
+    },
+    async createManyActive(this: PowderTable<Users>, names: string[]) {
+      return this.createMany(
+        names.map((name, i) => ({ id: 100 + i, name, score: 0, active: true })),
+      );
+    },
+  },
+  posts: {
+    async byUser(this: PowderTable<Posts>, userId: number): Promise<Posts[]> {
+      return this.where({ user_id: userId }).orderBy("id").all();
+    },
+  },
+});
+
+await xdb.users.top(3);          // 自定义方法
+await xdb.users.count();          // 内置方法照常可用
+await xdb.posts.byUser(1);
+```
+
+类型被完整保留 —— `xdb.users` 的类型为 `PowderTable<Users> & { top, createManyActive }`。
+
+## 在事务中同样适用
+
+传递给 `$transaction` 回调的客户端也会应用相同的扩展:
+
+```ts
+await xdb.$transaction(async (tx) => {
+  await tx.users.createManyActive(["a", "b"]);
+  const best = await tx.users.top(1);
+});
+```
+
+## Python
+
+```python
+from powder.orm import extend_powder
+
+async def top(self, n):
+    return await self.order_by("score", "desc").limit(n).all()
+
+xdb = extend_powder(db, {"users": {"top": top}})
+await xdb.users.top(3)
+```
+
+## 规则
+
+- 扩展一个不存在的表名会**立即报错** (防止拼写错误)。
+- 方法内的 `this`(Python 中为 `self`)就是被扩展的表本身 ——
+  可以自由组合内置方法与其他自定义方法。
+- 原始的 `db` 不会被修改，因此共享扩展前客户端的代码不受影响。

@@ -1,0 +1,78 @@
+---
+title: Rust
+description: 直接使用核心的原生客户端
+---
+
+在 Rust 中根本不存在 FFI 边界。只需直接依赖 `powder-core` crate 即可。
+其他语言跨越边界所使用的那个核心,在这里是原生调用的。
+
+## 依赖
+
+```toml
+[dependencies]
+powder-core = { path = "crates/powder-core" }   # 或已发布的版本
+```
+
+后端通过 feature 开启:`--features postgres`、`--features mysql`
+(SQLite 为默认)。
+
+## 连接 → 查询
+
+```rust
+use powder_core::Client;
+
+let db = Client::connect("sqlite::memory:")?;
+db.execute("CREATE TABLE users (id INTEGER, name TEXT, score REAL)", &[])?;
+db.execute("INSERT INTO users VALUES (?, ?, ?)", &[1.into(), "alice".into(), 9.5.into()])?;
+
+// Query 构建器
+let batch = db.query("SELECT id, name FROM users WHERE score >= ?", &[5.0.into()])?;
+for r in 0..batch.num_rows() {
+    println!("{} {}", batch.column("id").i64(r), batch.column("name").str(r));
+}
+```
+
+结果就是原始的 PCB 列缓冲区。不像其他语言那样需要单独的解码器,
+可以直接读取核心返回的批次。
+
+## 事务
+
+```rust
+db.transaction(|tx| {
+    tx.execute("INSERT INTO users VALUES (2, 'bob', 7.0)", &[])?;
+    Ok(())   // Ok → COMMIT,Err → ROLLBACK。嵌套则使用保存点。
+})?;
+```
+
+占位符始终是 `?`。在 Postgres 后端上,核心会自动转换为 `$n`
+(字符串字面量·注释·`::` 类型转换会被保留)。构建/测试请参考仓库中的
+`crates/powder-core`。
+
+## ORM
+
+Rust 也完整支持 Powder ORM —— 事实上其他语言使用的共享引擎正是这个
+`powder_core::orm`。它在运行时解析 `powder.schema.json` 文本使用,
+运算和语法(`findMany`/`findFirst`/`create`/`createMany`/
+`update`/`delete`/`deleteAll`/`count`/`exists`/`aggregate`/`groupBy`+having,
+嵌套 `AND`/`OR`/`NOT` where —— `eq ne gt gte lt lte like in`,
+`include` 批量关联加载,`join` belongsTo LEFT JOIN)在所有语言中都
+完全一致。
+
+```rust
+use powder_core::orm::{Orm, OrmSchema};
+use serde_json::json;
+
+let schema_json = std::fs::read_to_string("powder.schema.json")?;
+let orm = Orm::new(db, OrmSchema::parse(&schema_json)?);
+
+orm.execute(&json!({"op": "create", "table": "users",
+    "data": {"id": 1, "name": "alice", "score": 9.5, "active": true}})).await?;
+
+let rows = orm.find_json(&json!({"op": "findMany", "table": "users",
+    "where": {"active": true, "score": {"gte": 5}},
+    "orderBy": {"score": "desc"}, "limit": 10})).await?;
+```
+
+变更操作(`create`/`update`/`delete`/……)通过 `execute`(返回影响的行数)
+执行,返回行数据的操作(`findMany`/`groupBy`/……)通过 `find_json`
+(返回 JSON 值)执行。

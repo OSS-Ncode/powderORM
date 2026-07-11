@@ -1,0 +1,86 @@
+---
+title: Finder チェイニング (初心者向け文法)
+description: where・orderBy・paginate・集計 — 読んだ通りに動く
+---
+
+`db.テーブル.where(...)` で始まるすべての呼び出しは**新しい Finder**を
+返します。部分クエリを変数に保存して共有しても、互いに影響を与えません。
+
+## フィルタ
+
+```ts
+db.users.where({ active: true })            // オブジェクト形式
+db.users.where("score", ">=", 5)            // 3引数形式 (初心者向け)
+db.users.where("name", "like", "a%")
+db.users.where("id", "in", [1, 2, 3])
+
+// 繰り返しの呼び出しは AND で結合されます
+db.users.where({ active: true }).where("score", ">", 8)
+```
+
+3引数演算子: `=` `!=` `>` `>=` `<` `<=` `like` `in`
+
+## OR・ネストした条件
+
+`AND`/`OR`/`NOT` の論理キーを使うことで、複雑な条件を任意の深さで
+組み合わせられます (Prisma スタイル)。最上位のカラムキーと論理キーは
+すべて AND で結合されます。
+
+```ts
+await db.users.findMany({
+  where: {
+    active: true,                       // 他の条件と AND
+    OR: [
+      { score: { gte: 90 } },
+      { name: { like: "vip%" } },
+    ],
+    NOT: { banned: true },
+  },
+});
+```
+
+- `OR: []` (空配列) は何にもマッチしません。
+- さらに複雑なもの(ウィンドウ関数・CTE・サブクエリ)は
+  [名前付きクエリ](/ja/docs/orm/queries-transactions)や raw `db.query()` を使ってください。
+
+## 終端メソッド
+
+```ts
+await q.all();          // T[]
+await q.first();        // T | null
+await q.count();        // number
+await q.exists();       // boolean
+await q.pluck("name");  // 1カラム分の値の配列
+await q.sum("score");   // 集計: sum / avg / min / max (行が無ければ null)
+```
+
+## ページネーション
+
+```ts
+const page = await db.users.orderBy("id").paginate(2, 20);  // 2ページ目、20件ずつ
+page.rows        // このページの行
+page.total       // 全体の件数 (ページに依存しない)
+page.totalPages  // 総ページ数
+```
+
+## ソート・範囲・リレーション
+
+```ts
+db.users.orderBy("score", "desc").orderBy("id")   // 複数ソート
+db.users.limit(10).offset(20)
+db.posts.where({...}).include({ user: true })      // リレーションのロード (N+1 なし)
+db.posts.where({...}).join({ user: true })         // belongsTo を単一 JOIN で
+```
+
+`include`/`join` のリレーション名は生成された型のおかげでエディタで
+自動補完され、タイプミスはコンパイルエラーになります。
+
+## Python では
+
+同じ機能がスネークケースで存在します:
+
+```python
+await db.users.where("score", ">=", 5).order_by("score", "desc").limit(10).all()
+await db.users.where(active=True).avg("score")
+page = await db.users.order_by("id").paginate(1, 20)   # page.rows / page.total
+```

@@ -1,0 +1,42 @@
+---
+title: 语言指南
+description: 9 种语言,同一引擎,同一列缓冲区
+---
+
+Powder 不会为每种语言重新实现一遍。9 个绑定共享**同一个 Rust 核心**和
+**同一种 PCB 线格式**。所以无论用哪种语言,表面用法都一样:
+
+```
+connect(url) → execute / query → 按类型读取列 → transaction(嵌套=保存点)
+```
+
+从下表选择你的语言,直接跳转到对应页面。
+
+| 语言 | 连接方式 | ORM 支持程度 |
+|---|---|---|
+| [TypeScript / Node](/zh/docs/bindings/typescript) | napi-rs,外部缓冲区零拷贝 | ✅ 完整(代码生成 typed 模型) |
+| [Python](/zh/docs/bindings/python) | PyO3 | ✅ 完整(代码生成 typed 模型) |
+| [Rust](/zh/docs/bindings/rust) | 直接使用核心 | ✅ 完整(`powder_core::orm`) |
+| [Java](/zh/docs/bindings/java) | JNI(`queryDirect()` 零拷贝) | ✅ 完整(`db.orm(schema)`) |
+| [Kotlin](/zh/docs/bindings/kotlin) | 基于 Java 的惯用封装 | ✅ 完整(`db.orm(schema)`) + DSL |
+| [Go](/zh/docs/bindings/go) | C ABI(Windows 上无需 cgo) | ✅ 完整(`db.Orm(schema)`) |
+| [C](/zh/docs/bindings/c) | 稳定 C ABI | ✅ 完整(JSON op API) |
+| [C++](/zh/docs/bindings/cpp) | 单头文件,RAII | ✅ 完整(`powder::Orm`) |
+| [C#](/zh/docs/bindings/csharp) | P/Invoke | ✅ 完整(`db.Orm(schema)`) |
+
+**所有语言都完整支持 ORM。** TS、Python 通过 `powder generate` 生成的 typed
+模型(静态类型 + AOT SQL)实现,其余 7 种语言则通过在 Rust 核心中实现一次的
+**共享 ORM 引擎**实现——`findMany`/`create`/`update`/`delete`/`count`/
+`aggregate`/`groupBy`(+having)、嵌套 `AND`/`OR`/`NOT` where、
+`include`/`join` 关系加载,语法和语义在各语言间完全一致。
+
+## 通用规则
+
+- **值永远通过 `?` 绑定**——SQL 文本中不会直接拼入值。
+  标识符(表名·列名)会经过正则校验。注入在结构上就被杜绝了。
+- **结果以 PCB 列缓冲区一次性传输**——各语言的读取器在该缓冲区上建立视图
+  来读取数据。不会逐行往返 FFI,速度更快。
+- **没有 `where()` 的 `update`/`delete` 会被拒绝**——若要修改整张表,
+  必须像 `updateAll()`/`deleteAll()` 那样显式声明。
+
+各绑定的构建·测试方法请参见仓库中的 `bindings/*/README.md`。

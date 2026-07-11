@@ -1,0 +1,77 @@
+---
+title: C#
+description: P/Invoke binding (.NET 8+)
+---
+
+The C# binding calls the `powder_ffi` native library via P/Invoke and decodes
+the PCB column buffer in managed code. Requires .NET 8 or later.
+
+## Locating the native library
+
+1. Set `POWDER_LIB` to the full path, or
+2. Place `powder_ffi.dll` / `libpowder_ffi.so` next to your app or on the
+   loader search path.
+
+## Usage
+
+```csharp
+using Powder;
+
+using var db = Client.Connect("sqlite::memory:");
+db.Execute("CREATE TABLE t (id INTEGER, name TEXT, score REAL)");
+db.Execute("INSERT INTO t VALUES (?,?,?)", 1L, "alice", 9.5);
+
+Batch batch = db.Query("SELECT * FROM t WHERE score >= ?", 5.0);
+for (int r = 0; r < batch.NumRows; r++)
+    Console.WriteLine($"{batch["id"].GetInt64(r)} {batch["name"].GetString(r)}");
+```
+
+- Parameters are `long`/`double`/`bool`/`string`/`null` (passed internally as a
+  JSON array).
+- `Column.Get(row)` returns a boxed value (or `null` for SQL NULL);
+  `GetInt64/GetDouble/GetBoolean/GetString` are the unboxed paths.
+- Every error is a `PowderException` (with the engine message).
+
+## Transactions
+
+```csharp
+db.Transaction(tx => {
+    tx.Execute("INSERT INTO t VALUES (2, 'bob', 1.0)");
+    // return to COMMIT, throw to ROLLBACK. Nested = savepoint.
+});
+```
+
+## ORM
+
+C# has the full Powder ORM via the shared engine implemented once in the Rust
+core (`powder_core::orm`), so the operations and syntax are identical in every
+language: `FindMany`/`FindFirst`/`Create`/`CreateMany`/`Update`/`Delete`/
+`DeleteAll`/`Count`/`Exists`/`Aggregate`/`GroupBy` (+having), nested
+`AND`/`OR`/`NOT` where (`eq ne gt gte lt lte like in`), `include` (batched
+relation load), and `join` (belongsTo LEFT JOIN). The schema is your
+`powder.schema.json` text passed at runtime; options are anonymous objects (or
+dictionaries) and rows come back as a `System.Text.Json.Nodes.JsonArray`.
+
+```csharp
+using var orm = db.Orm(schemaJson);
+var users = orm.Table("users");
+
+users.Create(new { id = 1, name = "alice", score = 9.5, active = true });
+
+var rows = users.FindMany(new
+{
+    where = new { active = true, score = new { gte = 5 } },
+    orderBy = new { score = "desc" },
+    limit = 10,
+});   // JsonArray
+Console.WriteLine(rows[0]!["name"]);
+```
+
+## Build & test
+
+```bash
+cargo build -p powder-ffi --release
+cd bindings/csharp/Powder.Tests
+POWDER_LIB=<target>/release/powder_ffi.dll dotnet run
+# -> csharp binding OK (32 checks)
+```

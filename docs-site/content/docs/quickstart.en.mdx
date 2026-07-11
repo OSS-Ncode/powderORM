@@ -1,0 +1,77 @@
+---
+title: Quickstart
+description: From powder new to your first query
+---
+
+## 1. Create a project
+
+```bash
+powder new my-app && cd my-app
+npm install
+```
+
+`powder new` gives you: `powder.schema.json` (plus a JSON Schema for editor
+autocomplete), seed data, a tsconfig, a demo `src/main.ts`, and generated
+typed models.
+
+## 2. Schema → database
+
+```bash
+npm run migrate     # CREATE TABLE (in FK-dependency order)
+npm run seed        # load seed.json
+npm run generate    # regenerate src/models.ts (AOT query compilation)
+```
+
+Open `powder.schema.json` and VS Code autocompletes tables, columns, and types.
+
+```json
+{
+  "$schema": "./powder.schema.schema.json",
+  "tables": {
+    "users": {
+      "columns": {
+        "id":     { "type": "int",   "primaryKey": true },
+        "name":   { "type": "text" },
+        "score":  { "type": "float", "nullable": true },
+        "active": { "type": "bool" }
+      }
+    }
+  }
+}
+```
+
+## 3. Your first query
+
+```ts
+import { Client } from "@powder/node";
+import { powder } from "./models.js";
+
+const db = powder(await Client.connect("app.db"));
+
+await db.users.create({ id: 1, name: "alice", score: 9.5, active: true });
+
+const alice = await db.users.find(1);
+const top = await db.users
+  .where("score", ">=", 5)      // 3-arg form
+  .orderBy("score", "desc")
+  .limit(10)
+  .all();
+```
+
+## 4. The build gate
+
+Stop the build when the schema and DB drift apart:
+
+```bash
+powder validate --db app.db && tsc
+```
+
+On drift you get a `mismatch: ...` list and `exit 1`.
+
+## When you change the schema
+
+```bash
+powder migrate --db app.db              # additive (add tables/columns)
+powder migrate --db app.db --rebuild    # destructive changes too (data-preserving, SQLite)
+npm run generate                        # regenerate models
+```

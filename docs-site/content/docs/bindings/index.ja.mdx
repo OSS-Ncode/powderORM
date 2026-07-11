@@ -1,0 +1,42 @@
+---
+title: 言語ガイド
+description: 9言語、同じエンジン、同じカラムバッファ
+---
+
+Powderは言語ごとに再実装しません。9つのバインディングが**同じRustコア**と
+**同じPCBワイヤーフォーマット**を共有しています。だからどの言語でも表面は同じです。
+
+```
+connect(url) → execute / query → 型別カラム読み取り → transaction(ネスト=セーブポイント)
+```
+
+下の表から自分の言語を選んで、該当ページへ進んでください。
+
+| 言語 | 接続方式 | ORMレベル |
+|---|---|---|
+| [TypeScript / Node](/ja/docs/bindings/typescript) | napi-rs、外部バッファzero-copy | ✅ 完全(コードジェンtypedモデル) |
+| [Python](/ja/docs/bindings/python) | PyO3 | ✅ 完全(コードジェンtypedモデル) |
+| [Rust](/ja/docs/bindings/rust) | コア直接 | ✅ 完全(`powder_core::orm`) |
+| [Java](/ja/docs/bindings/java) | JNI(`queryDirect()` ゼロコピー) | ✅ 完全(`db.orm(schema)`) |
+| [Kotlin](/ja/docs/bindings/kotlin) | Javaの上の慣用ラッパー | ✅ 完全(`db.orm(schema)`) + DSL |
+| [Go](/ja/docs/bindings/go) | C ABI(Windowsはcgo不要) | ✅ 完全(`db.Orm(schema)`) |
+| [C](/ja/docs/bindings/c) | 安定C ABI | ✅ 完全(JSON op API) |
+| [C++](/ja/docs/bindings/cpp) | ヘッダー1つ、RAII | ✅ 完全(`powder::Orm`) |
+| [C#](/ja/docs/bindings/csharp) | P/Invoke | ✅ 完全(`db.Orm(schema)`) |
+
+**すべての言語がORMを完全サポートしています。** TS・Pythonは`powder generate`の
+typedモデル(静的型 + AOT SQL)で、残り7言語はRustコアに一度だけ実装された
+**共有ORMエンジン**で — `findMany`/`create`/`update`/`delete`/`count`/
+`aggregate`/`groupBy`(+having)、ネストした`AND`/`OR`/`NOT` where、
+`include`/`join`によるリレーションロードまで、文法と意味が言語に依存せず同一です。
+
+## 共通ルール
+
+- **値は常に`?`バインディング** — SQLテキストに値が直接埋め込まれることはありません。
+  識別子(テーブル・カラム)は正規表現検証を通ります。インジェクションが構造的に防がれます。
+- **結果はPCBカラムバッファで1回送信** — 各言語のリーダーがそのバッファ上にビューを
+  作って読み取ります。行ごとにFFIを往復しないため高速です。
+- **`where()`のない`update`/`delete`は拒否** — テーブル全体の変更は
+  `updateAll()`/`deleteAll()`のように明示する必要があります。
+
+各バインディングのビルド・テスト方法はリポジトリの`bindings/*/README.md`にあります。

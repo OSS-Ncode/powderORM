@@ -1,0 +1,45 @@
+---
+title: 集計と groupBy
+description: count・sum・avg・groupBy・having
+---
+
+集合全体のスカラー集計は Finder にあります (`sum`/`avg`/`min`/`max`/`count`)。
+グループごとの集計には `groupBy` を使います — 戻り値はモデルではなく平坦な行です。
+
+```ts
+const rows = await db.orders.groupBy({
+  by: ["user_id"],
+  where: { amount: { gt: 0 } },   // 通常の WHERE (OR・ネスト含む) がそのまま使える
+  count: true,                    // → _count
+  sum: ["amount"],                // → _sum_amount
+  having: { _sum_amount: { gt: 100 } },
+  orderBy: { _sum_amount: "desc" },
+});
+// [{ user_id: 1, _count: 12, _sum_amount: 340.5 }, ...]
+```
+
+- エイリアス: `_count`, `_sum_<カラム>`, `_avg_<カラム>`, `_min_<カラム>`, `_max_<カラム>`。
+- `having` は集計にフィルタをかけます (`eq ne gt gte lt lte`)。移植性のため、
+  HAVING はエイリアスではなく集計式(`SUM("amount") > ?`)としてレンダリングされます。
+- `orderBy` はエイリアスまたはグループカラムでソートできます。
+- さらに複雑なもの(ウィンドウ関数・CTE)は raw `db.query()` や
+  [名前付きクエリ](/ja/docs/orm/queries-transactions)を使ってください。
+
+## 他の言語でも同様
+
+同じエイリアス・結果形式です。
+
+```python
+rows = await db.orders.group_by(
+    by=["user_id"], count=True, sum=["amount"],
+    having={"_sum_amount": {"gt": 100}}, order_by={"_sum_amount": "desc"},
+)  # list[dict]
+```
+
+```kotlin
+db.from("orders").groupBy(
+    by = listOf("user_id"), count = true, sum = listOf("amount"),
+    having = mapOf("_sum_amount" to (">" to 100.0)),
+    orderBy = mapOf("_sum_amount" to Order.DESC),
+)  // List<Map<String, Any?>>
+```

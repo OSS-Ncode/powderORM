@@ -1,0 +1,48 @@
+---
+title: CLIリファレンス
+description: powder new · init · generate · migrate · validate · seed · ddl
+---
+
+```text
+powder new <dir>       新規プロジェクトのスキャフォールディング（create-powder-app）
+powder init            powder.schema.json + エディタ用JSON Schemaを生成
+powder generate        AOT typedモデルを生成（--ts / --py）
+powder ddl             CREATE TABLEを出力（--dialect sqlite|postgres|mysql）
+powder migrate --db    テーブル作成/カラム追加（加算的; --rebuildで破壊的変更）
+powder validate --db   スキーマ↔DBのドリフトを検出 — 不一致ならexit 1（ビルドゲート）
+powder seed --db       .json / .sql シードを投入
+```
+
+DB URL: `sqlite::memory:` · `sqlite://path` · パス ·
+`postgres://user:pass@host/db` · `mysql://user:pass@host/db`
+
+## migrate
+
+バックエンドごとのintrospection（SQLite PRAGMA / Postgres pg_catalog /
+MySQL information_schema）で現在の状態を読み取り、**その方言のDDLのみ**を
+適用します。すでに一致していれば`database already up to date`です。
+
+`--rebuild`（SQLite専用）: カラム削除・型変更のような破壊的ドリフトを、
+公式の再構築パターンで解消します。残存するカラムのデータは保持されます。
+
+## validate = ビルドゲート
+
+```bash
+powder validate --db app.db && tsc
+```
+
+カラムの存在/型/NULL/主キーの順序（複合含む）/外部キー（複合含む）/
+余分なカラムを照合し、不一致があれば一覧とともに失敗します。CIに組み込む
+ことで、スキーマのドリフトがランタイムエラーになる前に検出できます。
+
+## 方言別の型
+
+| スキーマ | sqlite | postgres | mysql |
+|---|---|---|---|
+| int | INTEGER | BIGINT | BIGINT |
+| float | REAL | DOUBLE PRECISION | DOUBLE |
+| text | TEXT | TEXT | TEXT / VARCHAR(255)* |
+| bool | INTEGER | BOOLEAN | TINYINT(1) |
+
+*MySQLはキーメンバーのtextをVARCHAR(255)としてレンダリングします（bareな
+TEXTはインデックス不可のため）。

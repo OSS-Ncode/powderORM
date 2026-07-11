@@ -1,0 +1,58 @@
+---
+title: 命名查询与事务
+description: 在 schema 中声明 SQL 并以 typed 方法调用
+---
+
+## 命名查询 (自定义 SQL)
+
+复杂的 SQL 请在 schema 的 `queries` 部分声明。`powder generate` 会在
+**生成阶段**将 `:名称` 占位符编译为位置绑定，并生成 typed 方法。
+
+```json
+"queries": {
+  "topUsers": {
+    "sql": "SELECT id, name, score, active FROM users WHERE active = :active AND score >= :minScore ORDER BY score DESC",
+    "params": { "active": "bool", "minScore": "float" },
+    "returns": "users"
+  }
+}
+```
+
+```ts
+const rows = await db.$queries.topUsers({ active: true, minScore: 5 });
+// rows: Users[]  (指定了 returns 时为 typed)
+```
+
+```python
+rows = await db.queries.top_users(active=True, min_score=5)
+```
+
+校验在生成阶段就已完成: 未声明的占位符、未使用的参数、不存在的
+`returns` 表都会被 `powder generate` 拒绝。字符串字面量中的 `:x` 和
+`::` 类型转换不会被处理。
+
+## 事务
+
+正常返回则 COMMIT，抛出异常则 ROLLBACK。嵌套调用使用 SAVEPOINT，
+因此内层失败不会清除外层的操作。
+
+```ts
+await db.$transaction(async (tx) => {
+  await tx.users.create({ id: 3, name: "carol", score: 7.5, active: true });
+  await tx.posts.create({ id: 9, user_id: 3, title: "hi" });
+
+  try {
+    await tx.$transaction(async (inner) => {
+      await inner.posts.create({ id: 10, user_id: 3, title: "oops" });
+      throw new Error("取消");        // ← 仅回滚这一次 insert
+    });
+  } catch {}
+});
+```
+
+```python
+async with db.transaction():
+    await db.users.create({"id": 3, "name": "carol", "score": 7.5, "active": True})
+```
+
+同样的语义在 Kotlin(`db.transaction { }`)、Java、Go、C++、C# 中同样存在。

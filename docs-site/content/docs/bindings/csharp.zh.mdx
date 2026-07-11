@@ -1,0 +1,77 @@
+---
+title: C#
+description: P/Invoke 绑定(.NET 8+)
+---
+
+C# 绑定通过 P/Invoke 调用 `powder_ffi` 原生库,并在托管代码中解码
+PCB 列缓冲区。需要 .NET 8 及以上版本。
+
+## 原生库位置
+
+1. 在环境变量 `POWDER_LIB` 中指定完整路径,或
+2. 将 `powder_ffi.dll` / `libpowder_ffi.so` 放在应用旁边或加载器的
+   搜索路径中。
+
+## 用法
+
+```csharp
+using Powder;
+
+using var db = Client.Connect("sqlite::memory:");
+db.Execute("CREATE TABLE t (id INTEGER, name TEXT, score REAL)");
+db.Execute("INSERT INTO t VALUES (?,?,?)", 1L, "alice", 9.5);
+
+Batch batch = db.Query("SELECT * FROM t WHERE score >= ?", 5.0);
+for (int r = 0; r < batch.NumRows; r++)
+    Console.WriteLine($"{batch["id"].GetInt64(r)} {batch["name"].GetString(r)}");
+```
+
+- 参数类型为 `long`/`double`/`bool`/`string`/`null`(内部以 JSON 数组
+  形式传递)。
+- `Column.Get(row)` 返回装箱值(若为 SQL NULL 则返回 `null`),
+  `GetInt64/GetDouble/GetBoolean/GetString` 是无装箱的路径。
+- 所有错误都以 `PowderException`(包含引擎消息)抛出。
+
+## 事务
+
+```csharp
+db.Transaction(tx => {
+    tx.Execute("INSERT INTO t VALUES (2, 'bob', 1.0)");
+    // 返回时 COMMIT,抛出异常时 ROLLBACK。嵌套则使用保存点。
+});
+```
+
+## ORM
+
+C# 也完整支持 Powder ORM —— 使用在 Rust 核心中实现一次的共享引擎
+(`powder_core::orm`),因此运算和语法在所有语言中完全一致:
+`FindMany`/`FindFirst`/`Create`/`CreateMany`/`Update`/`Delete`/`DeleteAll`/
+`Count`/`Exists`/`Aggregate`/`GroupBy`(+having)、嵌套 `AND`/`OR`/`NOT` where
+(`eq ne gt gte lt lte like in`)、`include`(批量关联加载)、
+`join`(belongsTo LEFT JOIN)。schema 在运行时以 `powder.schema.json`
+文本传入,选项以匿名对象(或字典)传入,行数据以
+`System.Text.Json.Nodes.JsonArray` 返回。
+
+```csharp
+using var orm = db.Orm(schemaJson);
+var users = orm.Table("users");
+
+users.Create(new { id = 1, name = "alice", score = 9.5, active = true });
+
+var rows = users.FindMany(new
+{
+    where = new { active = true, score = new { gte = 5 } },
+    orderBy = new { score = "desc" },
+    limit = 10,
+});   // JsonArray
+Console.WriteLine(rows[0]!["name"]);
+```
+
+## 构建 & 测试
+
+```bash
+cargo build -p powder-ffi --release
+cd bindings/csharp/Powder.Tests
+POWDER_LIB=<target>/release/powder_ffi.dll dotnet run
+# -> csharp binding OK (32 checks)
+```

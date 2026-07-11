@@ -1,0 +1,77 @@
+---
+title: Java
+description: JNI 绑定 + 零拷贝 queryDirect 路径
+---
+
+Java 绑定通过 JNI 调用 Rust 核心。提供驱动程序 + PCB 读取器,
+在对性能要求较高的路径上还提供**完全零拷贝**的 `queryDirect()`。
+
+## 准备
+
+```bash
+cargo build -p powder-java --release        # 原生库
+cd crates/powder-java && javac -d out java/com/powder/*.java
+```
+
+原生库的位置可通过 `POWDER_LIB` 指定,或放在加载器的搜索路径中。
+
+## 连接 → 查询
+
+```java
+try (Client db = Client.connect("sqlite::memory:")) {
+    db.execute("CREATE TABLE t (id INTEGER, name TEXT, score REAL)");
+    db.execute("INSERT INTO t VALUES (?, ?, ?)", 1L, "alice", 9.5);
+
+    Batch b = db.query("SELECT id, name FROM t WHERE score >= ?", 5.0);
+    for (int r = 0; r < b.numRows(); r++)
+        System.out.println(b.column("id").getLong(r) + " " + b.column("name").getString(r));
+}
+```
+
+## 零拷贝路径 —— `queryDirect`
+
+```java
+try (Batch b = db.queryDirect("SELECT * FROM t")) {   // DirectByteBuffer,零次拷贝
+    long id = b.column("id").getLong(0);
+}   // close() 会释放原生内存 —— close 后再读取会抛出异常(防止 UAF)
+```
+
+`queryDirect` 会将 PCB 缓冲区原样以 `DirectByteBuffer` 暴露出来,无需拷贝。
+但代价是 `Batch` 会持有原生内存的所有权,因此必须用 `try-with-resources`
+关闭,关闭后再读取会抛出异常(防止 Use-After-Free)。
+
+## 事务
+
+```java
+db.transaction(tx -> {
+    tx.execute("INSERT INTO t VALUES (2, 'bob', 1.0)");
+    // 返回时 COMMIT,抛出异常时 ROLLBACK。嵌套则使用保存点。
+});
+```
+
+## ORM
+
+Java 也完整支持 Powder ORM —— 使用在 Rust 核心中实现一次的共享引擎
+(`powder_core::orm`),因此运算和语法在所有语言中完全一致:
+`findMany`/`findFirst`/`create`/`createMany`/`update`/`delete`/`deleteAll`/
+`count`/`exists`/`aggregate`/`groupBy`(+having)、嵌套 `AND`/`OR`/`NOT` where
+(`eq ne gt gte lt lte like in`)、`include`(批量关联加载)、
+`join`(belongsTo LEFT JOIN)。将 `powder.schema.json` 文本在运行时传入即可。
+
+```java
+try (Orm orm = db.orm(schemaJson)) {
+    Orm.Table users = orm.table("users");
+    users.create(Map.of("id", 1, "name", "alice", "score", 9.5, "active", true));
+
+    List<Map<String, Object>> rows = users.findMany(Map.of(
+        "where", Map.of("active", true, "score", Map.of("gte", 5)),
+        "orderBy", Map.of("score", "desc"),
+        "limit", 10));
+}
+```
+
+行数据以 `List<Map<String, Object>>` 返回。如果像多列 `orderBy` 那样
+键的顺序很重要,请使用 `LinkedHashMap` 而不是 `Map.of`。
+
+如果想要更符合语言习惯的查询构建器·where DSL,可以看看构建在其之上的
+[Kotlin](/zh/docs/bindings/kotlin) 绑定。

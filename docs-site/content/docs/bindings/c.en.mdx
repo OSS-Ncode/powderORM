@@ -1,0 +1,75 @@
+---
+title: C
+description: the stable C ABI — the foundation for every binding
+---
+
+`crates/powder-ffi` exports a stable C ABI. The Go, C#, and C++ bindings all sit
+on this surface. One header, `powder.h`, is all you need.
+
+## Usage
+
+```c
+#include "powder.h"
+
+PowderClient *db = powder_connect("sqlite::memory:");
+powder_execute(db, "CREATE TABLE t (id INTEGER, name TEXT)", NULL);
+powder_execute(db, "INSERT INTO t VALUES (?, ?)", "[1, \"alice\"]");
+
+size_t len;
+unsigned char *pcb = powder_query(db, "SELECT * FROM t", NULL, &len);
+/* pcb is the PCB column buffer — format in docs/FORMAT.md, decoder in the C++ wrapper */
+powder_free_buffer(pcb, len);
+powder_close(db);
+```
+
+## Rules
+
+- **Parameters are passed as a JSON array string**: `"[1, \"a\", true, null]"`.
+  This keeps the C surface to plain pointers and integers.
+- **Errors are NULL / -1** plus `powder_last_error()` (thread-local, borrowed) or
+  `powder_last_error_copy()`.
+- Free a `powder_query` buffer with `powder_free_buffer` using **the exact
+  length returned**.
+
+## ORM
+
+C gets the full Powder ORM too — it speaks the shared Rust engine's
+(`powder_core::orm`) JSON op spec directly. Build a schema handle once from
+your `powder.schema.json` text, then pass one JSON object per operation. The
+operations and syntax are identical in every language: `findMany`/
+`findFirst`/`create`/`createMany`/`update`/`delete`/`deleteAll`/`count`/
+`exists`/`aggregate`/`groupBy` (+having), nested `AND`/`OR`/`NOT` where
+(`eq ne gt gte lt lte like in`), `include`/`join`.
+
+```c
+PowderOrmSchema *schema = powder_orm_schema_new(schema_json);
+
+powder_orm_execute(db, schema,
+    "{\"op\":\"create\",\"table\":\"users\","
+    "\"data\":{\"id\":1,\"name\":\"alice\",\"score\":9.5,\"active\":true}}");
+
+size_t len = 0;
+unsigned char *rows = powder_orm_find_json(db, schema,
+    "{\"op\":\"findMany\",\"table\":\"users\","
+    "\"where\":{\"active\":true,\"score\":{\"gte\":5}},"
+    "\"orderBy\":{\"score\":\"desc\"},\"limit\":10}", &len);
+/* rows = UTF-8 JSON array (len bytes) */
+powder_free_buffer(rows, len);
+powder_orm_schema_free(schema);
+```
+
+Mutations/counts go through `powder_orm_execute` (affected count, -1 on
+error); row-returning ops go through `powder_orm_find_json` (JSON, freed with
+`powder_free_buffer`).
+
+## Build (Windows / MSVC)
+
+```bat
+cargo build -p powder-ffi --release
+cl /W3 /utf-8 test\test_powder.c /I include /link <target>\release\powder_ffi.dll.lib
+```
+
+Unix: `cc test/test_powder.c -Iinclude -lpowder_ffi -L<target>/release`.
+
+Prefer a wrapper over decoding PCB by hand? The [C++](/en/docs/bindings/cpp) header
+gives you RAII plus a decoder.

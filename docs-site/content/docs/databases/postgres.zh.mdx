@@ -1,0 +1,60 @@
+---
+title: PostgreSQL
+description: 完整支持运行时和迁移，占位符自动转换
+---
+
+PostgreSQL 完整支持运行时查询和迁移。保留你在 SQLite 上编写的
+代码，只需更换连接字符串即可。
+
+## 连接
+
+```
+postgres://user:pass@host:5432/dbname
+```
+
+## 占位符仍使用 `?`
+
+Postgres 原生使用 `$1, $2` 语法，但 Powder 引擎会**自动将 `?` 转换为
+`$n`**。字符串字面量、注释以及 `::` 类型转换中的 `?` 不会被改动。
+
+```sql
+SELECT * FROM users WHERE score >= ? AND name LIKE ?
+-- 引擎内部会转换为 $1, $2
+```
+
+## 类型映射注意事项
+
+超出映射范围的类型不会被静默解码错误，而是给出**引导性错误**。
+
+```
+Postgres NUMERIC 列 → "请使用 col::text 转换" 错误
+```
+
+此时请在查询中显式转换：
+
+```sql
+SELECT amount::text FROM orders
+```
+
+## 无结果缓存
+
+Powder 无法感知 Postgres 上其他客户端的写入，因此结果缓存
+是关闭的（正确性优先）。这是仅限 SQLite 的优化项。
+
+## DDL / 迁移
+
+```bash
+powder ddl --dialect postgres          # 输出 CREATE TABLE
+powder migrate --db postgres://...     # pg_catalog introspection → 仅应用所需的 DDL
+```
+
+类型映射：`int → BIGINT`、`float → DOUBLE PRECISION`、`text → TEXT`、
+`bool → BOOLEAN`。
+
+## 针对服务器验证
+
+```bash
+POWDER_PG_URL=postgres://... cargo test -p powder-core --features postgres
+```
+
+如果没有设置该环境变量，相关测试会被跳过，因此不会导致 CI 失败。

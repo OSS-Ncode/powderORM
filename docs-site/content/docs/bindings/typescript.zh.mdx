@@ -1,0 +1,78 @@
+---
+title: TypeScript / Node
+description: napi-rs 绑定 + 代码生成的完整 ORM
+---
+
+TypeScript 是 Powder 支持最深入的语言。`powder generate` 会从
+`powder.schema.json` 生成 typed 模型,运行时基于 napi-rs 以零拷贝方式读取
+外部缓冲区。
+
+## 安装
+
+```bash
+powder new my-app && cd my-app
+npm install
+```
+
+如果已有项目,只需安装驱动:
+
+```bash
+npm install @powder/node
+```
+
+## 连接 → 查询
+
+```ts
+import { Client } from "@powder/node";
+import { powder } from "./models.js";   // powder generate 生成的文件
+
+const db = powder(await Client.connect("app.db"));
+
+await db.users.create({ id: 1, name: "alice", score: 9.5, active: true });
+
+// 新手友好的链式调用 —— 所见即所得
+const top = await db.users
+  .where("score", ">=", 5)
+  .orderBy("score", "desc")
+  .limit(10)
+  .all();
+
+// 选项对象形式 —— 同一引擎,更加显式
+const rows = await db.users.findMany({
+  where: { active: true, score: { gte: 5 } },
+  orderBy: { score: "desc" },
+  limit: 10,
+});
+```
+
+## 关联关系(无 N+1)
+
+```ts
+// 每层都以一条批量 IN 查询加载
+const posts = await db.posts.findMany({ include: { user: true } });
+```
+
+## 事务
+
+```ts
+await db.$transaction(async (tx) => {
+  await tx.users.create({ id: 2, name: "bob" });
+  // 返回时 COMMIT,抛出异常时 ROLLBACK。嵌套则使用保存点。
+});
+```
+
+## 附加自定义方法 —— `$extend`
+
+```ts
+const xdb = db.$extend({
+  posts: {
+    async byUser(this: PowderTable<Posts>, id: number) {
+      return this.where({ user_id: id }).all();
+    },
+  },
+});
+await xdb.posts.byUser(1);
+```
+
+更深入的内容请参阅 [ORM 指南](/zh/docs/orm)。出错时会附带失败的 SQL 和
+调用位置(`file:line:col`),在终端中点击即可跳转到那一行。

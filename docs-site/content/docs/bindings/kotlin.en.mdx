@@ -1,0 +1,88 @@
+---
+title: Kotlin
+description: an ORM-style DSL on top of Java
+---
+
+The Kotlin binding layers an idiomatic Kotlin API over the Java (JNI) binding:
+a chainable query builder, infix where operators, transaction blocks. It's a
+runtime DSL, so there's no codegen step — just use it.
+
+## Connect → query
+
+```kotlin
+import dev.powder.*
+
+Database.connect("sqlite::memory:", libPath).use { db ->
+    db.execute("CREATE TABLE users (id INTEGER, name TEXT, score REAL, active INTEGER)")
+
+    // ORM-style write
+    db.from("users").insert("id" to 1, "name" to "alice", "score" to 9.5, "active" to 1)
+
+    // chainable read — each step returns a new TableRef, so sharing partials is safe
+    val top = db.from("users")
+        .select("id", "name", "score")
+        .where { ("score" gte 5.0) and ("active" eq 1) }
+        .orderBy("score", Order.DESC)
+        .limit(10)
+        .all()                                  // List<Map<String, Any?>>
+
+    val bob = db.from("users").find("id" to 2)  // Map? — null if not found
+    db.from("users").where { "id" eq 2 }.update("score" to 5.0)
+    db.from("users").where { "id" eq 2 }.delete()
+}
+```
+
+## The where DSL
+
+The `eq ne gt gte lt lte like inList` infix operators build parameterized SQL.
+Values never enter SQL text (`?` binds), and identifiers must pass
+`[A-Za-z_][A-Za-z0-9_]*` validation.
+
+- `"score" eq null` → `score IS NULL`, `"score" ne null` → `IS NOT NULL`
+- `"id" inList emptyList()` → always false (`1 = 0`)
+- `and` / `or` are parenthesized so precedence is preserved
+
+## Safety guard
+
+```kotlin
+db.from("users").update("score" to 5.0)   // ❌ update without where → throws
+db.from("users").updateAll("score" to 5.0) // ✅ whole-table change is explicit
+```
+
+## Transactions
+
+```kotlin
+db.transaction { tx ->
+    tx.from("users").insert("id" to 3, "name" to "carol", "score" to 7.5, "active" to 1)
+    // return to COMMIT, throw to ROLLBACK. Nested = savepoint.
+}
+```
+
+## Schema-aware ORM
+
+Alongside the `from(...)` DSL, passing your `powder.schema.json` text at
+runtime gives you the full ORM backed by the shared Rust engine
+(`powder_core::orm`) — the operations and syntax are identical in every
+Powder language: `findMany`/`findFirst`/`create`/`createMany`/`update`/
+`delete`/`deleteAll`/`count`/`exists`/`aggregate`/`groupBy` (+having), nested
+`AND`/`OR`/`NOT` where (`eq ne gt gte lt lte like in`), `include` (batched
+relation load), and `join` (belongsTo LEFT JOIN).
+
+```kotlin
+db.orm(schemaJson).use { orm ->
+    val users = orm.table("users")
+    users.create(mapOf("id" to 1, "name" to "alice", "score" to 9.5, "active" to true))
+
+    val top = users.findMany(
+        where = mapOf("active" to true, "score" to mapOf("gte" to 5)),
+        orderBy = mapOf("score" to "desc"),
+        limit = 10,
+    )
+    users.update(mapOf("id" to 1), mapOf("score" to 10))
+    users.count(mapOf("active" to true))
+    users.groupBy(by = listOf("active"), count = true,
+                  having = mapOf("_count" to mapOf("gte" to 2)))
+}
+```
+
+See `bindings/kotlin/README.md` in the repo for build and test details.

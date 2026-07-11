@@ -1,0 +1,42 @@
+---
+title: MySQL / MariaDB
+description: 런타임·마이그레이션 완전 지원
+---
+
+MySQL과 MariaDB는 런타임 쿼리와 마이그레이션을 완전히 지원해요. 연결
+문자열만 바꾸면 다른 백엔드와 동일하게 동작합니다.
+
+## 연결
+
+```
+mysql://user:pass@host:3306/dbname
+```
+
+## 타입 매핑 주의
+
+`information_schema` introspection으로 현재 스키마를 읽고, 필요한 DDL만
+적용해요. 키에 들어가는 `text` 컬럼은 인덱스가 가능하도록 **VARCHAR(255)**로
+렌더링됩니다(bare `TEXT`는 MySQL에서 인덱스 불가).
+
+타입 매핑: `int → BIGINT`, `float → DOUBLE`, `text → TEXT`(키 멤버는
+`VARCHAR(255)`), `bool → TINYINT(1)`.
+
+## 결과 캐시 없음
+
+서버 DB라 다른 클라이언트의 쓰기를 감지할 수 없어 결과 캐시는 꺼집니다
+(정확성 우선).
+
+## DDL / 마이그레이션
+
+```bash
+powder ddl --dialect mysql
+powder migrate --db mysql://...
+```
+
+## 서버로 검증
+
+```bash
+POWDER_MYSQL_URL=mysql://... cargo test -p powder-cli
+```
+
+환경변수가 없으면 스킵되므로 CI가 깨지지 않아요.

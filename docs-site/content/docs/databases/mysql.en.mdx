@@ -1,0 +1,42 @@
+---
+title: MySQL / MariaDB
+description: full runtime + migrations
+---
+
+MySQL and MariaDB have full support for runtime queries and migrations. Change
+the connection string and everything works like the other backends.
+
+## Connecting
+
+```
+mysql://user:pass@host:3306/dbname
+```
+
+## Type-mapping note
+
+`information_schema` introspection reads the current schema and applies only the
+DDL that's needed. A `text` column that's part of a key is rendered as
+**VARCHAR(255)** so it can be indexed (a bare `TEXT` can't be indexed in MySQL).
+
+Type mapping: `int → BIGINT`, `float → DOUBLE`, `text → TEXT` (key members
+`VARCHAR(255)`), `bool → TINYINT(1)`.
+
+## No result cache
+
+As a server DB it can't detect writes from other clients, so the result cache is
+off (correctness first).
+
+## DDL / migrations
+
+```bash
+powder ddl --dialect mysql
+powder migrate --db mysql://...
+```
+
+## Verify against a server
+
+```bash
+POWDER_MYSQL_URL=mysql://... cargo test -p powder-cli
+```
+
+Without the env var it's skipped, so CI won't break.

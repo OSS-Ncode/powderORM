@@ -1,0 +1,77 @@
+---
+title: 快速开始
+description: 从 powder new 到第一次查询
+---
+
+## 1. 创建项目
+
+```bash
+powder new my-app && cd my-app
+npm install
+```
+
+`powder new` 会为你生成：`powder.schema.json`（+ 用于编辑器自动补全的
+JSON Schema）、种子数据（seed data）、tsconfig、演示用的 `src/main.ts`，
+以及已生成的 typed 模型。
+
+## 2. schema → 数据库
+
+```bash
+npm run migrate     # CREATE TABLE（按外键依赖顺序）
+npm run seed        # 加载 seed.json
+npm run generate    # 重新生成 src/models.ts（AOT 查询编译）
+```
+
+打开 `powder.schema.json` 后，VS Code 会自动补全表、列和类型。
+
+```json
+{
+  "$schema": "./powder.schema.schema.json",
+  "tables": {
+    "users": {
+      "columns": {
+        "id":     { "type": "int",   "primaryKey": true },
+        "name":   { "type": "text" },
+        "score":  { "type": "float", "nullable": true },
+        "active": { "type": "bool" }
+      }
+    }
+  }
+}
+```
+
+## 3. 第一次查询
+
+```ts
+import { Client } from "@powder/node";
+import { powder } from "./models.js";
+
+const db = powder(await Client.connect("app.db"));
+
+await db.users.create({ id: 1, name: "alice", score: 9.5, active: true });
+
+const alice = await db.users.find(1);
+const top = await db.users
+  .where("score", ">=", 5)      // 三参数写法
+  .orderBy("score", "desc")
+  .limit(10)
+  .all();
+```
+
+## 4. 构建门禁
+
+当 schema 与数据库出现偏差时，让构建流程停下来：
+
+```bash
+powder validate --db app.db && tsc
+```
+
+如果存在漂移（drift），会列出 `mismatch: ...` 清单并以 exit 1 退出。
+
+## 修改了 schema 之后
+
+```bash
+powder migrate --db app.db              # 增量式（新增表/列）
+powder migrate --db app.db --rebuild    # 包含破坏性变更（保留数据，仅 SQLite）
+npm run generate                        # 重新生成模型
+```

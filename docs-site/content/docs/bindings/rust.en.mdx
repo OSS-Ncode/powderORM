@@ -1,0 +1,78 @@
+---
+title: Rust
+description: native client that uses the core directly
+---
+
+In Rust there's no FFI boundary at all — you depend on the `powder-core` crate
+directly. It's the same core every other language reaches across, used natively.
+
+## Dependency
+
+```toml
+[dependencies]
+powder-core = { path = "crates/powder-core" }   # or a published version
+```
+
+Backends are feature-gated: `--features postgres`, `--features mysql` (SQLite
+is the default).
+
+## Connect → query
+
+```rust
+use powder_core::Client;
+
+let db = Client::connect("sqlite::memory:")?;
+db.execute("CREATE TABLE users (id INTEGER, name TEXT, score REAL)", &[])?;
+db.execute("INSERT INTO users VALUES (?, ?, ?)", &[1.into(), "alice".into(), 9.5.into()])?;
+
+// Query builder
+let batch = db.query("SELECT id, name FROM users WHERE score >= ?", &[5.0.into()])?;
+for r in 0..batch.num_rows() {
+    println!("{} {}", batch.column("id").i64(r), batch.column("name").str(r));
+}
+```
+
+Results are the PCB column buffer directly — no separate decoder needed like in
+other languages; you read the batch the core returns.
+
+## Transactions
+
+```rust
+db.transaction(|tx| {
+    tx.execute("INSERT INTO users VALUES (2, 'bob', 7.0)", &[])?;
+    Ok(())   // Ok → COMMIT, Err → ROLLBACK. Nested = savepoint.
+})?;
+```
+
+Placeholders are always `?`. On the Postgres backend the core converts them to
+`$n` automatically (string literals, comments, and `::` casts are preserved).
+See `crates/powder-core` in the repo for build and test details.
+
+## ORM
+
+Rust has the full Powder ORM — in fact `powder_core::orm` *is* the shared
+engine the other languages call into. The schema is `powder.schema.json` text
+parsed at runtime, and the operations and syntax are identical in every
+language: `findMany`/`findFirst`/`create`/`createMany`/`update`/`delete`/
+`deleteAll`/`count`/`exists`/`aggregate`/`groupBy` (+having), nested
+`AND`/`OR`/`NOT` where (operators `eq ne gt gte lt lte like in`),
+`include` (batched relation load), and `join` (belongsTo LEFT JOIN).
+
+```rust
+use powder_core::orm::{Orm, OrmSchema};
+use serde_json::json;
+
+let schema_json = std::fs::read_to_string("powder.schema.json")?;
+let orm = Orm::new(db, OrmSchema::parse(&schema_json)?);
+
+orm.execute(&json!({"op": "create", "table": "users",
+    "data": {"id": 1, "name": "alice", "score": 9.5, "active": true}})).await?;
+
+let rows = orm.find_json(&json!({"op": "findMany", "table": "users",
+    "where": {"active": true, "score": {"gte": 5}},
+    "orderBy": {"score": "desc"}, "limit": 10})).await?;
+```
+
+Mutations (`create`/`update`/`delete`/…) go through `execute` (returns the
+affected count); row-returning ops (`findMany`/`groupBy`/…) go through
+`find_json` (returns a JSON value).

@@ -1,0 +1,42 @@
+---
+title: MySQL / MariaDB
+description: 完整支持运行时和迁移
+---
+
+MySQL 和 MariaDB 完整支持运行时查询和迁移。只需更换连接
+字符串，其余行为与其他后端一致。
+
+## 连接
+
+```
+mysql://user:pass@host:3306/dbname
+```
+
+## 类型映射注意事项
+
+通过 `information_schema` introspection 读取当前架构，
+仅应用所需的 DDL。作为键成员的 `text` 列会被渲染为
+**VARCHAR(255)** 以便建立索引（在 MySQL 中裸 `TEXT` 无法建立索引）。
+
+类型映射：`int → BIGINT`、`float → DOUBLE`、`text → TEXT`（键成员为
+`VARCHAR(255)`）、`bool → TINYINT(1)`。
+
+## 无结果缓存
+
+作为服务器端数据库，无法感知其他客户端的写入，因此结果缓存
+是关闭的（正确性优先）。
+
+## DDL / 迁移
+
+```bash
+powder ddl --dialect mysql
+powder migrate --db mysql://...
+```
+
+## 针对服务器验证
+
+```bash
+POWDER_MYSQL_URL=mysql://... cargo test -p powder-cli
+```
+
+如果没有设置该环境变量，测试会被跳过，因此不会导致 CI 失败。

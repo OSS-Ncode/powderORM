@@ -1,0 +1,62 @@
+---
+title: The schema file
+description: powder.schema.json — a single source of truth
+---
+
+One schema file derives all of it: DDL, migrations, validation, typed models,
+relations, and named queries.
+
+```json
+{
+  "$schema": "./powder.schema.schema.json",
+  "tables": {
+    "users": {
+      "columns": {
+        "id":     { "type": "int",   "primaryKey": true },
+        "name":   { "type": "text" },
+        "score":  { "type": "float", "nullable": true },
+        "active": { "type": "bool" }
+      }
+    },
+    "posts": {
+      "columns": {
+        "id":      { "type": "int", "primaryKey": true },
+        "user_id": { "type": "int", "references": { "table": "users", "column": "id" } },
+        "title":   { "type": "text" }
+      }
+    }
+  }
+}
+```
+
+## Types
+
+`int` · `float` · `text` · `bool` — the same set the PCB wire format carries
+zero-copy. Columns are NOT NULL by default; relax with `"nullable": true`.
+
+## Keys
+
+- **Primary key**: `"primaryKey": true`. Put it on multiple columns for a
+  composite key (`PRIMARY KEY (a, b)`), and `validate` checks the order too.
+- **Foreign key**: single column via the column's `references`; composite via
+  the table-level `foreignKeys`. Parsing checks that the target exists and the
+  types match, and the ORM relations (`posts.user` / `users.posts`) are derived
+  automatically.
+
+```json
+"foreignKeys": [
+  { "columns": ["order_id", "order_year"],
+    "references": { "table": "orders", "columns": ["id", "year"] } }
+]
+```
+
+## Editor autocomplete
+
+`powder init` / `powder new` also emits `powder.schema.schema.json` (a JSON
+Schema), and the first line's `$schema` points at it. VS Code then autocompletes
+keys, types, and query conventions, and flags bad values as you type.
+
+## Named queries
+
+See [Named queries and transactions](/en/docs/orm/queries-transactions) — SQL in
+the `queries` section is compiled into typed methods at generation time.

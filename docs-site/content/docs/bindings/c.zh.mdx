@@ -1,0 +1,74 @@
+---
+title: C
+description: 稳定 C ABI —— 所有绑定的基石
+---
+
+`crates/powder-ffi` 导出稳定的 C ABI。Go·C#·C++ 绑定全都构建在这个
+表面之上。只需一个头文件 `powder.h`。
+
+## 用法
+
+```c
+#include "powder.h"
+
+PowderClient *db = powder_connect("sqlite::memory:");
+powder_execute(db, "CREATE TABLE t (id INTEGER, name TEXT)", NULL);
+powder_execute(db, "INSERT INTO t VALUES (?, ?)", "[1, \"alice\"]");
+
+size_t len;
+unsigned char *pcb = powder_query(db, "SELECT * FROM t", NULL, &len);
+/* pcb 是 PCB 列缓冲区 —— 格式见 docs/FORMAT.md,解码示例参考 C++ 封装 */
+powder_free_buffer(pcb, len);
+powder_close(db);
+```
+
+## 规则
+
+- **参数以 JSON 数组字符串**传递:`"[1, \"a\", true, null]"`。
+  这样选择是为了让 C 表面保持简单的指针·整数形式。
+- **错误以 NULL / -1** 表示,可通过 `powder_last_error()`
+  (线程本地,borrowed)或 `powder_last_error_copy()` 确认。
+- `powder_query` 返回的缓冲区必须**按返回的长度**用 `powder_free_buffer`
+  释放。
+
+## ORM
+
+C 也完整支持 Powder ORM —— 直接使用共享 Rust 引擎(`powder_core::orm`)的
+JSON op 规范。用 `powder.schema.json` 文本创建一次 schema 句柄,之后每次
+操作传入一个 JSON 对象即可。运算·语法与所有语言相同:
+`findMany`/`findFirst`/`create`/`createMany`/`update`/`delete`/
+`deleteAll`/`count`/`exists`/`aggregate`/`groupBy`(+having)、嵌套
+`AND`/`OR`/`NOT` where(`eq ne gt gte lt lte like in`)、`include`/`join`。
+
+```c
+PowderOrmSchema *schema = powder_orm_schema_new(schema_json);
+
+powder_orm_execute(db, schema,
+    "{\"op\":\"create\",\"table\":\"users\","
+    "\"data\":{\"id\":1,\"name\":\"alice\",\"score\":9.5,\"active\":true}}");
+
+size_t len = 0;
+unsigned char *rows = powder_orm_find_json(db, schema,
+    "{\"op\":\"findMany\",\"table\":\"users\","
+    "\"where\":{\"active\":true,\"score\":{\"gte\":5}},"
+    "\"orderBy\":{\"score\":\"desc\"},\"limit\":10}", &len);
+/* rows = UTF-8 JSON 数组(len 字节) */
+powder_free_buffer(rows, len);
+powder_orm_schema_free(schema);
+```
+
+变更/计数类操作使用 `powder_orm_execute`(返回影响的行数,失败为 -1),
+返回行数据的操作使用 `powder_orm_find_json`(JSON,需用
+`powder_free_buffer` 释放)。
+
+## 构建(Windows / MSVC)
+
+```bat
+cargo build -p powder-ffi --release
+cl /W3 /utf-8 test\test_powder.c /I include /link <target>\release\powder_ffi.dll.lib
+```
+
+Unix:`cc test/test_powder.c -Iinclude -lpowder_ffi -L<target>/release`。
+
+如果想要比直接解码 PCB 更省心的封装,可以看看 [C++](/zh/docs/bindings/cpp)
+头文件,它提供了 RAII + 解码器。

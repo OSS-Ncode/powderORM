@@ -1,0 +1,90 @@
+---
+title: Go
+description: C ABIバインディング(Windowsはcgo不要)
+---
+
+Go バインディングは`powder-ffi`がエクスポートする安定C ABIを通じてRustコアを
+呼び出し、zero-copy PCBカラムバッファを純粋なGoでデコードします。
+
+- **Windows**: Cツールチェーンが不要です — `syscall`でバインドして
+  `CGO_ENABLED=0`でビルドされます。
+- **Linux / macOS**: cgoで共有ライブラリを`dlopen`します。
+
+## 準備
+
+```bash
+cargo build -p powder-ffi --release
+# -> <target>/release/powder_ffi.{dll,so,dylib}
+```
+
+## 接続 → クエリ
+
+```go
+import powder "github.com/OSS-Ncode/powderORM/bindings/go"
+
+if err := powder.Load(os.Getenv("POWDER_LIB")); err != nil { panic(err) }
+
+db, _ := powder.Connect("sqlite::memory:")
+defer db.Close()
+
+db.Exec("CREATE TABLE users (id INTEGER, name TEXT, score REAL)")
+db.Exec("INSERT INTO users VALUES (?,?,?)", 1, "alice", 9.5)
+
+// フルエントビルダー、またはバインディングパラメータ付きのraw SQL
+batch, _ := db.Run(
+    powder.Table("users").Select("id", "name").
+        Filter("score >= ?", 5.0).OrderBy("id", "ASC"),
+)
+name := batch.Column("name")
+for r := 0; r < batch.NumRows(); r++ {
+    fmt.Println(name.String(r))
+}
+```
+
+バインディングパラメータはGoの整数・浮動小数点・`string`・`bool`・`nil`を
+受け取ります。
+
+## トランザクション
+
+```go
+err := db.Transaction(func(tx *powder.Client) error {
+    _, err := tx.Exec("INSERT INTO users VALUES (2, 'bob', 7.0)")
+    return err   // nil → COMMIT、error → ROLLBACK。ネストはセーブポイント。
+})
+```
+
+## ORM
+
+GoもPowder ORMを完全サポートしています — Rustコアに一度だけ実装された共有
+エンジン(`powder_core::orm`)を使うため、演算と文法がすべての言語で同一です。
+`FindMany`/`FindFirst`/`Create`/`CreateMany`/`Update`/`Delete`/`DeleteAll`/
+`Count`/`Exists`/`Aggregate`/`GroupBy`(+having)、ネストした`AND`/`OR`/`NOT` where
+(`eq ne gt gte lt lte like in`)、`include`(バッチリレーションロード)、
+`join`(belongsTo LEFT JOIN)。スキーマは`powder.schema.json`テキストを
+ランタイムに渡すだけです。
+
+```go
+orm, _ := db.Orm(schemaJSON)
+defer orm.Close()
+
+users := orm.Table("users")
+users.Create(powder.M{"id": 1, "name": "alice", "score": 9.5, "active": true})
+
+rows, _ := users.FindMany(powder.M{
+    "where":   powder.M{"active": true, "score": powder.M{"gte": 5}},
+    "orderBy": powder.M{"score": "desc"},
+    "limit":   10,
+})   // []powder.M
+```
+
+`powder.M`は`map[string]any`のエイリアスで、行も`[]powder.M`として返って
+きます。
+
+## 注意点
+
+- PCBペイロードはネイティブメモリからGoスライスへ**一度コピー**され、以降は
+  GCが所有します — Goランタイムが外来ポインタの保持を禁止しているためで、
+  これは設計上の安全装置です。
+- `Column`はリトルエンディアンPCBから値を直接読みます。`Batch.Rows()`は
+  利便性のためのコピービューです。
+- `Client`は自身の呼び出しを直列化します — Rustコアが単一の接続を所有します。

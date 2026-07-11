@@ -1,0 +1,43 @@
+---
+title: 数据库
+description: SQLite · PostgreSQL · MySQL · SQL Server · libSQL · CockroachDB
+---
+
+后端由 `Client.connect(url)` 的 URL 一个参数决定 —— 所有绑定通用。
+代码保持不变，只需更换连接字符串即可。
+
+```
+sqlite::memory:  |  sqlite://path  |  path          → SQLite
+postgres://user:pass@host/db                        → PostgreSQL（CockroachDB 亦同）
+mysql://user:pass@host/db                           → MySQL / MariaDB
+mssql://user:pass@host/db                           → SQL Server（省略用户 = Windows 集成认证）
+libsql://host[?tls=false][&authToken=…]             → libSQL（sqld / Turso）
+```
+
+| 后端 | 运行时 | DDL | migrate / validate / seed | 结果缓存 |
+|---|---|---|---|---|
+| [SQLite](/zh/docs/databases/sqlite)（默认） | ✅ | ✅ | ✅（含 `--rebuild`） | ✅ |
+| [PostgreSQL](/zh/docs/databases/postgres) | ✅ | ✅ | ✅ | — |
+| [MySQL / MariaDB](/zh/docs/databases/mysql) | ✅ | ✅ | ✅ | — |
+| CockroachDB（PG wire） | ✅ | ✅ | ✅ | — |
+| SQL Server | ✅ | ✅（`--dialect mssql`） | ✅ | — |
+| libSQL（sqld / Turso） | ✅ | ✅（与 SQLite 相同） | ✅ | — |
+
+- **CockroachDB** 直接通过 PostgreSQL 驱动工作（`postgres://` URL）。
+- **SQL Server**：ORM 的 `limit` 渲染为 `TOP (n)`，`offset` 渲染为
+  `OFFSET … FETCH`（2012+，需要 `orderBy`）。事务语句（`BEGIN IMMEDIATE`、
+  `SAVEPOINT`、`RELEASE`）会自动规范化为 T-SQL。模式中的 `text` 渲染为
+  `NVARCHAR(400)`（可比较、可索引的 Unicode）。
+- **libSQL** 以 SQLite 方言连接远程 sqld/Turso；连接时自动执行
+  `PRAGMA foreign_keys=ON`。
+
+## 通用规则
+
+- **占位符始终使用 `?`** —— 在 Postgres 上引擎会自动转换为 `$n`
+  （字符串字面量、注释、`::` 类型转换会被保留)。
+- **超出类型映射的列会诚实地报错**。不会静默解码错误，
+  而是给出"应这样转换"的错误提示。
+- **结果缓存仅限 SQLite**。服务器端数据库无法感知其他客户端的写入，
+  因此会关闭缓存（正确性优先）。
+
+请前往各数据库的页面查看连接字符串、注意事项和验证方法。

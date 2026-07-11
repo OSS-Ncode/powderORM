@@ -1,0 +1,67 @@
+---
+title: 관계와 include
+description: FK에서 파생되는 관계, N+1 없는 로딩, 중첩 include
+---
+
+스키마의 외래 키가 곧 관계입니다. `user_id → users(id)`를 선언하면
+`posts.user`(belongsTo)와 `users.posts`(hasMany)가 자동으로 생깁니다.
+
+```json
+"posts": {
+  "columns": {
+    "id":      { "type": "int", "primaryKey": true },
+    "user_id": { "type": "int", "references": { "table": "users", "column": "id" } },
+    "title":   { "type": "text" }
+  }
+}
+```
+
+## 삭제와 FK 제약
+
+Powder는 FK를 선언만 합니다 — `ON DELETE CASCADE`/`SET NULL`은 어떤 DB
+방언에서도 생성하지 않고, `delete()`/`deleteAll()`도 그냥 `DELETE FROM`
+문이라 애플리케이션 레벨 cascade도 없습니다. 자식 행이 남아있는 부모를
+지우면:
+
+- **PostgreSQL/MySQL**: 기본적으로 FK가 강제되므로 DB가 즉시 에러를 냅니다.
+- **SQLite**: FK 강제가 커넥션 단위 설정(`PRAGMA foreign_keys`)이라 기본
+  꺼져 있습니다 — `migrate`는 내부적으로 켜지만 앱이 직접 연 커넥션은
+  아닙니다. 켜두지 않으면 부모 삭제가 자식을 고아로 남긴 채 조용히
+  성공합니다. 필요하면 연결 직후 `PRAGMA foreign_keys = ON`을 직접
+  실행하세요.
+
+## include — 배치 로드 (N+1 없음)
+
+```ts
+// 관계 레벨당 배치 IN 쿼리 1회
+const posts = await db.posts.findMany({ include: { user: true } });
+posts[0].user?.name;
+
+// 중첩 include — 각 레벨이 배치 1쿼리
+const deep = await db.posts.findMany({
+  include: { user: { include: { posts: true } } },
+});
+```
+
+관계 이름은 생성된 `*Include` 타입 덕분에 자동완성되고, 오타는 컴파일
+오류입니다.
+
+## join — 단일 쿼리 하이드레이션
+
+`belongsTo` 관계는 LEFT JOIN 한 번으로 실어올 수 있습니다:
+
+```ts
+const posts = await db.posts.findMany({ join: { user: true } });
+```
+
+`hasMany`에 join을 쓰면 부모 행이 곱해지므로 명시적 오류가 납니다 —
+그 경우엔 `include`를 쓰세요.
+
+## 복합 키
+
+복합 기본 키(여러 컬럼의 `primaryKey: true`)와 복합 외래 키(테이블 레벨
+`foreignKeys`)를 지원합니다. 관계 매칭은 키 튜플 단위로 이루어집니다.
+
+```ts
+await db.grades.find({ student: 1, course: "math" });   // 복합 PK 조회
+```

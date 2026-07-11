@@ -1,0 +1,85 @@
+---
+title: Finder 链式调用 (初学者语法)
+description: where · orderBy · paginate · 聚合 — 所见即所得
+---
+
+任何以 `db.表.where(...)` 开始的调用都会返回一个**新的 Finder**。
+将部分查询存到变量中共享使用也不会互相影响。
+
+## 过滤条件
+
+```ts
+db.users.where({ active: true })            // 对象形式
+db.users.where("score", ">=", 5)            // 三参数形式 (适合初学者)
+db.users.where("name", "like", "a%")
+db.users.where("id", "in", [1, 2, 3])
+
+// 重复调用会以 AND 合并
+db.users.where({ active: true }).where("score", ">", 8)
+```
+
+三参数运算符: `=` `!=` `>` `>=` `<` `<=` `like` `in`
+
+## OR · 嵌套条件
+
+使用 `AND`/`OR`/`NOT` 逻辑键可以任意深度地组合复杂条件 (类似 Prisma 风格)。
+最顶层的列键与逻辑键之间以 AND 连接。
+
+```ts
+await db.users.findMany({
+  where: {
+    active: true,                       // 与其他条件 AND
+    OR: [
+      { score: { gte: 90 } },
+      { name: { like: "vip%" } },
+    ],
+    NOT: { banned: true },
+  },
+});
+```
+
+- `OR: []`(空数组)不会匹配任何内容。
+- 更复杂的场景(窗口函数、CTE、子查询)请使用
+  [命名查询](/zh/docs/orm/queries-transactions)或原始的 `db.query()`。
+
+## 终结方法
+
+```ts
+await q.all();          // T[]
+await q.first();        // T | null
+await q.count();        // number
+await q.exists();       // boolean
+await q.pluck("name");  // 单列的值数组
+await q.sum("score");   // 聚合: sum / avg / min / max (无行时为 null)
+```
+
+## 分页
+
+```ts
+const page = await db.users.orderBy("id").paginate(2, 20);  // 第 2 页, 每页 20 条
+page.rows        // 当前页的行
+page.total       // 总条数 (与分页无关)
+page.totalPages  // 总页数
+```
+
+## 排序·范围·关系
+
+```ts
+db.users.orderBy("score", "desc").orderBy("id")   // 多重排序
+db.users.limit(10).offset(20)
+db.posts.where({...}).include({ user: true })      // 加载关系 (无 N+1)
+db.posts.where({...}).join({ user: true })         // 将 belongsTo 合并为单个 JOIN
+```
+
+`include`/`join` 中的关系名会因生成的类型而在编辑器中获得自动补全，
+拼写错误会成为编译错误。
+
+## 在 Python 中
+
+同样的接口以蛇形命名(snake_case)的形式存在:
+
+```python
+await db.users.where("score", ">=", 5).order_by("score", "desc").limit(10).all()
+await db.users.where(active=True).avg("score")
+page = await db.users.order_by("id").paginate(1, 20)   # page.rows / page.total
+```

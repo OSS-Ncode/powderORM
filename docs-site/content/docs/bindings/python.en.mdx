@@ -1,0 +1,55 @@
+---
+title: Python
+description: PyO3 binding + full-codegen ORM
+---
+
+The Python binding wraps the Rust core with PyO3 and mirrors the TS ORM exactly.
+Only the method names are Pythonic snake_case (`find_many`, `order_by`).
+
+## Install
+
+```bash
+pip install powder
+powder generate --py        # generates powder_models.py
+```
+
+## Connect → query
+
+```python
+from powder import connect
+from powder_models import powder          # from powder generate --py
+
+db = powder(await connect("sqlite::memory:"))
+
+await db.users.create({"id": 1, "name": "alice", "score": 9.5, "active": True})
+
+top = await db.users.find_many(
+    where={"score": {"gte": 5}},
+    order_by={"id": "asc"},
+    limit=10,
+)
+```
+
+where operators match TS: `eq ne gt gte lt lte like in`. `None` means
+`IS NULL`, `{"ne": None}` means `IS NOT NULL`, `{"in": []}` is always false.
+
+## Relations
+
+```python
+posts = await db.posts.find_many(include={"user": True})   # one batched IN per level
+```
+
+## Transactions
+
+```python
+async with db.transaction():
+    await db.users.create({"id": 2, "name": "bob"})
+    # normal exit → COMMIT, exception → ROLLBACK. Nested = savepoint.
+```
+
+Keep using `db.<table>` inside the block — the context manager yields the
+low-level driver `Client`, which has no model wrapper.
+
+Errors are wrapped in `PowderError` with the failing SQL and caller location
+(`file:line`). Thanks to AOT codegen, the runtime never re-parses a query — it
+just concatenates fragments.

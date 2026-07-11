@@ -1,0 +1,67 @@
+---
+title: ORM overview
+description: schema → typed models → CRUD, relations, transactions
+---
+
+The Powder ORM is built from typed models generated from `powder.schema.json`
+(`powder generate`) plus a runtime (`PowderTable`). Two syntaxes, one engine:
+
+- **Options-object form** — explicit and fully expressive
+- **Chaining (Finder) form** — beginner-friendly, reads like it runs
+
+The ORM is **fully supported in all 9 languages**: TS and Python via codegen
+typed models, and the other seven (Rust, Java, Kotlin, Go, C, C++, C#) via the
+shared engine implemented once in the Rust core (`powder_core::orm`) — the
+operations and syntax below behave identically regardless of language. See the
+[language guides](/en/docs/bindings) for per-language usage.
+
+## CRUD at a glance
+
+```ts
+// writes
+await db.users.create({ id: 1, name: "alice", score: 9.5, active: true });
+await db.users.createMany(rows);                       // auto-chunked (variable-limit safe)
+await db.users.update({ where: { id: 1 }, data: { score: 10 } });
+await db.users.delete({ id: 1 });                      // empty where is rejected
+await db.users.deleteAll();                            // deleting everything is explicit
+
+// reads — options-object form
+const rows = await db.users.findMany({
+  where: { active: true, score: { gte: 5 } },
+  orderBy: { score: "desc" },
+  limit: 10,
+});
+
+// reads — chaining form (same result)
+const same = await db.users
+  .where({ active: true })
+  .where("score", ">=", 5)
+  .orderBy("score", "desc")
+  .limit(10)
+  .all();
+```
+
+where operators: `eq ne gt gte lt lte like in` · `null` means `IS NULL`,
+`{ ne: null }` means `IS NOT NULL`, `in: []` is always false.
+
+## Guardrails
+
+The Powder ORM blocks dangerous calls up front:
+
+| Situation | Behavior |
+|---|---|
+| `delete({})` — empty where | error (use `deleteAll()` to wipe) |
+| `createMany` rows have differing columns | error (prevents silent NULL inserts) |
+| `createMany` chunk exceeds SQLite's variable limit (32,766) | auto-split into safe sizes |
+| unknown column / relation / operator | immediate error + location (Click-to-Jump) |
+
+## Click-to-Jump
+
+Every DB error is wrapped in `PowderError` with the failing SQL and the
+**caller's location** attached:
+
+```
+PowderError: database error: UNIQUE constraint failed: users.id
+  query: INSERT INTO users (id, name, active) VALUES (?, ?, ?)
+  at src/service.ts:42:19     ← click it in the terminal to jump to the line
+```

@@ -1,0 +1,45 @@
+---
+title: Databases
+description: SQLite · PostgreSQL · MySQL · SQL Server · libSQL · CockroachDB
+---
+
+You pick the backend with the URL in `Client.connect(url)` — the same across
+every binding. Leave your code alone and just change the connection string.
+
+```
+sqlite::memory:  |  sqlite://path  |  path          → SQLite
+postgres://user:pass@host/db                        → PostgreSQL (CockroachDB too)
+mysql://user:pass@host/db                           → MySQL / MariaDB
+mssql://user:pass@host/db                           → SQL Server (omit user = Windows integrated auth)
+libsql://host[?tls=false][&authToken=…]             → libSQL (sqld / Turso)
+```
+
+| Backend | Runtime | DDL | migrate / validate / seed | Result cache |
+|---|---|---|---|---|
+| [SQLite](/en/docs/databases/sqlite) (default) | ✅ | ✅ | ✅ (incl. `--rebuild`) | ✅ |
+| [PostgreSQL](/en/docs/databases/postgres) | ✅ | ✅ | ✅ | — |
+| [MySQL / MariaDB](/en/docs/databases/mysql) | ✅ | ✅ | ✅ | — |
+| CockroachDB (PG wire) | ✅ | ✅ | ✅ | — |
+| SQL Server | ✅ | ✅ (`--dialect mssql`) | ✅ | — |
+| libSQL (sqld / Turso) | ✅ | ✅ (same as SQLite) | ✅ | — |
+
+- **CockroachDB** works through the PostgreSQL driver as-is (`postgres://` URL).
+- **SQL Server**: the ORM renders `limit` as `TOP (n)` and `offset` as
+  `OFFSET … FETCH` (2012+, requires `orderBy`). Transaction statements
+  (`BEGIN IMMEDIATE`, `SAVEPOINT`, `RELEASE`) are normalized to T-SQL
+  automatically. Schema `text` renders as `NVARCHAR(400)` (comparable,
+  indexable Unicode).
+- **libSQL** speaks the SQLite dialect against a remote sqld/Turso;
+  `PRAGMA foreign_keys=ON` is applied on connect.
+
+## Same rules everywhere
+
+- **Placeholders are always `?`** — on Postgres the engine converts them to `$n`
+  automatically (string literals, comments, and `::` casts are preserved).
+- **Columns outside the type mapping fail honestly.** Instead of decoding wrong
+  silently, you get a "cast it like this" error.
+- **The result cache is SQLite-only.** Server DBs can't detect writes from other
+  clients, so the cache is off (correctness first).
+
+Head to your database's page for the connection string, gotchas, and how to
+verify against a real server.

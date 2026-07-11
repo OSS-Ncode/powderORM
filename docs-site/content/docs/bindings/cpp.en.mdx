@@ -1,0 +1,70 @@
+---
+title: C++
+description: one-header RAII wrapper + PCB decoder
+---
+
+The C++ binding is a single header (`include/powder.hpp`, C++17). It layers an
+RAII wrapper and a PCB decoder over the C ABI, so memory management lives in
+destructors.
+
+## Usage
+
+```cpp
+#include "powder.hpp"
+
+powder::Client db("sqlite::memory:");
+db.execute("CREATE TABLE t (id INTEGER, name TEXT, score REAL)");
+db.execute("INSERT INTO t VALUES (?, ?, ?)", {int64_t{1}, "alice", 9.5});
+
+powder::Batch b = db.query("SELECT * FROM t WHERE score >= ?", {5.0});
+for (size_t r = 0; r < b.num_rows(); ++r)
+    std::cout << b["id"].i64(r) << " " << b["name"].str(r) << "\n";
+```
+
+- Both `Client` and `Batch` are **move-only RAII** — the connection and native
+  buffer are released on destruction.
+- Column reads are views over the PCB buffer: `i64/f64/boolean/str(row)`,
+  `is_valid(row)`. `str` returns a `string_view`, valid only within the batch's
+  lifetime.
+- Every error is thrown as `powder::Error` (with the engine message).
+
+## Transactions
+
+```cpp
+db.transaction([](powder::Client& tx) {
+    tx.execute("INSERT INTO t VALUES (2, 'bob', 1.0)");
+    // return to COMMIT, throw to ROLLBACK. Nested = savepoint.
+});
+```
+
+## ORM
+
+C++ has the full Powder ORM via the shared Rust engine (`powder_core::orm`),
+so the operations and syntax are identical in every language: `find_many`/
+`find_first`/`create`/`create_many`/`update`/`remove`/`remove_all`/`count`/
+`exists`/`aggregate`/`group_by` (+having), nested `AND`/`OR`/`NOT` where
+(`eq ne gt gte lt lte like in`), `include` (batched relation load), and
+`join` (belongsTo LEFT JOIN). `delete` is a C++ keyword, so it's spelled
+`remove`/`remove_all`. The schema is your `powder.schema.json` text passed at
+runtime; options are JSON object strings and rows come back as a JSON string.
+
+```cpp
+powder::Orm orm(db, schema_json);
+auto users = orm.table("users");
+
+users.create(R"({"id":1,"name":"alice","score":9.5,"active":true})");
+
+std::string rows = users.find_many(
+    R"({"where":{"active":true,"score":{"gte":5}},
+        "orderBy":{"score":"desc"},"limit":10})");
+
+users.update(R"({"id":1})", R"({"score":10})");
+users.count(R"({"active":true})");
+```
+
+## Build (Windows / MSVC)
+
+```bat
+cargo build -p powder-ffi --release
+cl /std:c++17 /EHsc /W3 /utf-8 test\test_powder.cpp /link <target>\release\powder_ffi.dll.lib
+```
