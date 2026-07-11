@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ArrowRight, Boxes, Gauge, Heart, ShieldCheck, FileCode2, Layers } from 'lucide-react';
 import { gitConfig } from '@/lib/shared';
+import { CommitFeed } from '@/components/commit-feed';
 
 // lucide-react (this version) ships no brand icons, so inline the GitHub mark.
 function GithubMark({ className }: { className?: string }) {
@@ -30,6 +31,8 @@ type Copy = {
   sponsorHeading: string;
   sponsorBody: string;
   sponsorCta: string;
+  feedHeading: string;
+  feedBody: string;
 };
 
 const GH = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
@@ -88,6 +91,8 @@ const copy: Record<string, Copy> = {
     sponsorBody:
       'Powder는 오픈소스로 개발되고 있어요. 후원은 코어 개발과 더 많은 언어·DB 지원에 큰 힘이 됩니다.',
     sponsorCta: '개발 후원하기',
+    feedHeading: '실시간 개발 현황',
+    feedBody: 'main 브랜치에 커밋이 올라올 때마다 AI가 요약해서 여기 보여줍니다.',
   },
   en: {
     badge: 'Rust core · 9 languages · zero-copy',
@@ -141,6 +146,8 @@ const copy: Record<string, Copy> = {
     sponsorBody:
       'Powder is developed in the open. Sponsorship directly funds core development and broader language & database support.',
     sponsorCta: 'Sponsor the project',
+    feedHeading: 'Live development feed',
+    feedBody: 'Every commit to main gets summarized by AI and shown here in real time.',
   },
   zh: {
     badge: 'Rust 内核 · 9 种语言 · 零拷贝',
@@ -193,6 +200,8 @@ const copy: Record<string, Copy> = {
     sponsorHeading: 'Powder 帮到你了吗？',
     sponsorBody: 'Powder 是开源项目。你的赞助将直接支持内核开发以及更多语言和数据库的支持。',
     sponsorCta: '赞助这个项目',
+    feedHeading: '实时开发动态',
+    feedBody: '每次 main 分支有新提交，AI 都会自动摘要并显示在这里。',
   },
   ja: {
     badge: 'Rust コア · 9 言語 · ゼロコピー',
@@ -246,6 +255,8 @@ const copy: Record<string, Copy> = {
     sponsorBody:
       'Powder はオープンソースで開発されています。スポンサーはコア開発と、より多くの言語・DB サポートの大きな支えになります。',
     sponsorCta: '開発をスポンサーする',
+    feedHeading: 'リアルタイム開発フィード',
+    feedBody: 'main ブランチにコミットがあるたびに AI が要約してここに表示します。',
   },
 };
 
@@ -431,6 +442,17 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
             {t.sponsorCta}
           </a>
           <p className="mt-3 text-xs text-fd-muted-foreground">fairy.hada.io</p>
+        </div>
+      </section>
+
+      {/* Commit feed */}
+      <section className="border-t border-fd-border">
+        <div className="mx-auto flex max-w-2xl flex-col items-center px-6 py-20">
+          <h2 className="text-2xl font-semibold">{t.feedHeading}</h2>
+          <p className="mt-3 text-center text-fd-muted-foreground">{t.feedBody}</p>
+          <div className="mt-6 w-full">
+            <CommitFeed lang={lang} />
+          </div>
         </div>
       </section>
     </main>
