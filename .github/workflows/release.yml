@@ -384,7 +384,10 @@ jobs:
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.10"
+          # vanniktech maven-publish 0.37 needs a Gradle newer than 8.10
+          # (ProjectLayout.getSettingsDirectory(), added later) — always use
+          # the latest stable release instead of guessing a version floor.
+          gradle-version: "current"
       - name: Publish + release to Central Portal
         working-directory: jvm
         env:
