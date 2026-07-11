@@ -26,7 +26,7 @@ PROMPTS = {
     "ko": (
         "다음은 git 커밋 메시지와 diff입니다. 한국어로 2~3문장으로 무엇이 "
         "왜 바뀌었는지 자연어로 요약해줘. 코드를 그대로 인용하지 말고, "
-        "반드시 한국어로만 답해."
+        "반드시 한국어로만 답해. 한자(漢字)나 중국어를 섞지 말고 순한글로만 써."
     ),
     "en": (
         "Below is a git commit message and diff. Summarize in 2-3 sentences, "
