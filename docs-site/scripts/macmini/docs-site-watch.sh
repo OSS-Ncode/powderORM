@@ -25,7 +25,9 @@ while true; do
         npm install && mkdir -p node_modules && touch node_modules/.deploy-stamp
       fi
       if npm run build; then
-        ln -sf /Users/server/apps/commit-feed/feed.json "$APP_DIR/out/commit-feed.json"
+        # serve 패키지가 심볼릭 링크를 통한 서빙을 거부해서(보안, 실측
+        # 확인됨) 링크 대신 실제 파일로 복사한다.
+        cp -f /Users/server/apps/commit-feed/feed.json "$APP_DIR/out/commit-feed.json" 2>/dev/null
         launchctl kickstart -k system/com.powder.docs-site
         echo "[docs-site-watch] $(date '+%H:%M:%S') 빌드 및 재시작 완료"
       else
