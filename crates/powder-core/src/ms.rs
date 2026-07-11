@@ -151,7 +151,15 @@ fn parse_url(url: &str) -> Result<Config> {
             let (user, pass) = c.split_once(':').unwrap_or((c, ""));
             config.authentication(AuthMethod::sql_server(user, pass));
         }
-        _ => config.authentication(AuthMethod::Integrated),
+        _ => {
+            // AuthMethod::Integrated exists only on Windows in tiberius.
+            #[cfg(windows)]
+            config.authentication(AuthMethod::Integrated);
+            #[cfg(not(windows))]
+            return Err(Error::InvalidUrl(
+                "mssql integrated auth is Windows-only; provide user:pass in the URL".into(),
+            ));
+        }
     }
     // Older servers (2008) ship without a TLS certificate; encryption is
     // opt-in via `?encrypt=true`.
