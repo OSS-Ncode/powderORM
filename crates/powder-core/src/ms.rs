@@ -418,9 +418,19 @@ mod tests {
 
     #[test]
     fn url_forms_parse() {
-        assert!(parse_url("mssql://127.0.0.1/master").is_ok());
+        // Credential-less URLs use integrated auth, which tiberius only
+        // provides on Windows — elsewhere they are rejected with a clear error.
+        #[cfg(windows)]
+        {
+            assert!(parse_url("mssql://127.0.0.1/master").is_ok());
+            assert!(parse_url("sqlserver://127.0.0.1").is_ok());
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(parse_url("mssql://127.0.0.1/master").is_err());
+            assert!(parse_url("sqlserver://127.0.0.1").is_err());
+        }
         assert!(parse_url("mssql://sa:pw@db.host:1444/app").is_ok());
-        assert!(parse_url("sqlserver://127.0.0.1").is_ok());
         assert!(parse_url("postgres://x").is_err());
     }
 }

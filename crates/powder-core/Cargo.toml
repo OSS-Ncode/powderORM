@@ -33,7 +33,7 @@ rayon = "1"
 postgres = { version = "0.19", optional = true }
 # Only for the ToSql impl of the typeless NULL parameter (pg.rs).
 bytes = { version = "1", optional = true }
-mysql = { version = "25", optional = true, default-features = false, features = ["minimal"] }
+mysql = { version = "28", optional = true, default-features = false, features = ["minimal"] }
 # SQL Server: tds73 speaks to 2008+; winauth enables Windows integrated auth.
 tiberius = { version = "0.12", optional = true, default-features = false, features = ["tds73", "winauth"] }
 tokio-util = { version = "0.7", optional = true, features = ["compat"] }

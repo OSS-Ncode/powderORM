@@ -11,6 +11,13 @@ description = "Powder ORM CLI — schema management, migration, seeding, validat
 name = "powder"
 path = "src/main.rs"
 
+[features]
+# The dashboard + AI plugin live in their own crate (crates/powder-studio)
+# so a deployment can ship without them: build the lean binary with
+# `cargo build -p powder-cli --release --no-default-features`.
+default = ["studio"]
+studio = ["dep:powder-studio"]
+
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -18,7 +25,12 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # Live PostgreSQL migrations/validation (`powder migrate --db postgres://...`).
 postgres = "0.19"
 # Live MySQL/MariaDB migrations/validation (`powder migrate --db mysql://...`).
-mysql = { version = "25", default-features = false, features = ["minimal"] }
-# Live SQL Server / libSQL migrations/validation - reuses the engine backends
-# (they expose a synchronous surface).
-powder-core = { workspace = true, features = ["mssql", "libsql"] }
+mysql = { version = "28", default-features = false, features = ["minimal"] }
+# Live SQL Server / libSQL migrations/validation reuse the engine backends;
+# `query`/`exec`/`dump` go through the engine Client itself (uniform
+# RecordBatch + the SQL-injection guard), so every runtime backend is on.
+powder-core = { workspace = true, features = ["postgres", "mysql", "mssql", "libsql"] }
+# Blocking shim over the async engine client (powder_core::inspect::Engine).
+tokio = { workspace = true }
+# Dashboard (`powder studio`) + AI query generation (`powder ai`) — optional.
+powder-studio = { path = "../powder-studio", optional = true }
