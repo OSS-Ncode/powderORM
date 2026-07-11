@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(rtk cargo *)",
-      "Bash(node --test dist/orm.test.js dist/e2e.test.js)"
-    ]
-  }
-}
