@@ -56,6 +56,86 @@ impl AnyConn {
         }
     }
 
+    /// Names of the user tables in the live database (system/catalog tables
+    /// excluded), sorted.
+    pub fn table_names(&mut self) -> Result<Vec<String>, String> {
+        let mut names = match self {
+            AnyConn::Sqlite(c) => {
+                let mut stmt = c
+                    .prepare(
+                        "SELECT name FROM sqlite_master
+                         WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+                    )
+                    .map_err(|e| e.to_string())?;
+                let rows = stmt
+                    .query_map([], |r| r.get::<_, String>(0))
+                    .map_err(|e| e.to_string())?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| e.to_string())?;
+                rows
+            }
+            AnyConn::Pg(c) => c
+                .query(
+                    "SELECT table_name FROM information_schema.tables
+                     WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'",
+                    &[],
+                )
+                .map_err(|e| pg_es(&e))?
+                .iter()
+                .map(|r| r.get::<_, String>(0))
+                .collect(),
+            AnyConn::My(c) => {
+                use mysql::prelude::Queryable;
+                c.query(
+                    "SELECT TABLE_NAME FROM information_schema.TABLES
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'",
+                )
+                .map_err(|e| e.to_string())?
+            }
+            AnyConn::Ms(c) => {
+                let batch = c
+                    .query(
+                        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+                         WHERE TABLE_TYPE = 'BASE TABLE'",
+                        &[],
+                    )
+                    .map_err(|e| e.to_string())?;
+                (0..batch.num_rows)
+                    .filter_map(|r| {
+                        batch
+                            .column("TABLE_NAME")
+                            .and_then(|c| c.str(r))
+                            .map(String::from)
+                    })
+                    .collect()
+            }
+            AnyConn::Ls(c) => {
+                let batch = c
+                    .query(
+                        "SELECT name FROM sqlite_master
+                         WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+                        &[],
+                    )
+                    .map_err(|e| e.to_string())?;
+                (0..batch.num_rows)
+                    .filter_map(|r| batch.column("name").and_then(|c| c.str(r)).map(String::from))
+                    .collect()
+            }
+        };
+        names.sort();
+        Ok(names)
+    }
+
+    /// Column shapes of one live table (public for `describe`/`introspect`).
+    pub fn table_columns(&mut self, table: &str) -> Result<Vec<DbColumn>, String> {
+        self.columns(table)
+    }
+
+    /// Foreign keys of one live table (public for `describe`/`introspect`).
+    pub fn table_fks(&mut self, table: &str) -> Result<Vec<DbForeignKey>, String> {
+        self.fks(table)
+    }
+
     fn columns(&mut self, table: &str) -> Result<Vec<DbColumn>, String> {
         match self {
             AnyConn::Sqlite(c) => introspect(c, table),
@@ -290,7 +370,7 @@ fn ms_introspect(c: &powder_core::ms::MsBackend, table: &str) -> Result<Vec<DbCo
             "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
              FROM INFORMATION_SCHEMA.COLUMNS
              WHERE TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
-            &[t.clone()],
+            std::slice::from_ref(&t),
         )
         .map_err(|e| e.to_string())?;
     if cols.num_rows == 0 {
@@ -592,13 +672,13 @@ pub fn open_at(url: &str, cwd: &std::path::Path) -> Result<AnyConn, String> {
 
 /// One column as reported by `PRAGMA table_info`.
 #[derive(Debug, PartialEq)]
-struct DbColumn {
-    name: String,
-    sql_type: String,
-    notnull: bool,
+pub struct DbColumn {
+    pub name: String,
+    pub sql_type: String,
+    pub notnull: bool,
     /// 0 = not part of the primary key; otherwise the 1-based position
     /// within a (possibly composite) primary key.
-    pk: i64,
+    pub pk: i64,
 }
 
 fn introspect(conn: &Connection, table: &str) -> Result<Vec<DbColumn>, String> {
@@ -623,10 +703,10 @@ fn introspect(conn: &Connection, table: &str) -> Result<Vec<DbColumn>, String> {
 /// One foreign key as reported by `PRAGMA foreign_key_list`, with composite
 /// keys grouped: SQLite emits one row per column sharing an `id`, ordered by
 /// `seq`.
-struct DbForeignKey {
-    from: Vec<String>,
-    table: String,
-    to: Vec<String>,
+pub struct DbForeignKey {
+    pub from: Vec<String>,
+    pub table: String,
+    pub to: Vec<String>,
 }
 
 fn introspect_fks(conn: &Connection, table: &str) -> Result<Vec<DbForeignKey>, String> {
@@ -680,12 +760,23 @@ fn introspect_fks(conn: &Connection, table: &str) -> Result<Vec<DbForeignKey>, S
 /// retyped; use [`migrate_rebuild`] for destructive drift. Works on every
 /// backend: DDL text comes from the connection's own dialect.
 pub fn migrate(conn: &mut AnyConn, schema: &Schema) -> Result<Vec<String>, String> {
+    migrate_inner(conn, schema, true)
+}
+
+/// The DDL [`migrate`] *would* run, without executing anything (`--dry-run`).
+pub fn migrate_plan(conn: &mut AnyConn, schema: &Schema) -> Result<Vec<String>, String> {
+    migrate_inner(conn, schema, false)
+}
+
+fn migrate_inner(conn: &mut AnyConn, schema: &Schema, apply: bool) -> Result<Vec<String>, String> {
     let mut applied = Vec::new();
     for table in schema.tables_in_dependency_order() {
         let existing = conn.columns(&table.name)?;
         if existing.is_empty() {
             let ddl = conn.dialect().create_table(table);
-            conn.execute_batch(&ddl)?;
+            if apply {
+                conn.execute_batch(&ddl)?;
+            }
             applied.push(ddl);
             continue;
         }
@@ -694,7 +785,9 @@ pub fn migrate(conn: &mut AnyConn, schema: &Schema) -> Result<Vec<String>, Strin
                 continue;
             }
             let ddl = conn.dialect().add_column(table, col)?;
-            conn.execute_batch(&ddl)?;
+            if apply {
+                conn.execute_batch(&ddl)?;
+            }
             applied.push(ddl);
         }
     }

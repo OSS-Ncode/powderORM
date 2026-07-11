@@ -60,7 +60,9 @@ jobs:
       - name: Build + test powder (python)
         working-directory: crates/powder-python
         run: |
-          python -m pip install --upgrade pip maturin pytest
+          python -m venv .venv          # maturin develop requires an active venv
+          source .venv/bin/activate
+          pip install --upgrade pip maturin pytest
           maturin develop
           pytest tests
 

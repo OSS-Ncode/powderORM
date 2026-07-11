@@ -49,7 +49,7 @@ const COLDIR_LEN: usize = 40;
 const FLAG_ASCII: u8 = 2;
 
 fn align8(v: &mut Vec<u8>) {
-    while v.len() % 8 != 0 {
+    while !v.len().is_multiple_of(8) {
         v.push(0);
     }
 }
@@ -366,10 +366,10 @@ pub(crate) fn encode_parts(names: &[String], cols: &[ColParts<'_>], nrows: usize
         unsafe {
             match col {
                 ColParts::Int(parts) => {
-                    write_numeric_parts(bp.0.add(lay.buf1_off), parts.iter().map(|p| *p));
+                    write_numeric_parts(bp.0.add(lay.buf1_off), parts.iter().copied());
                 }
                 ColParts::Float(parts) => {
-                    write_numeric_parts(bp.0.add(lay.buf1_off), parts.iter().map(|p| *p));
+                    write_numeric_parts(bp.0.add(lay.buf1_off), parts.iter().copied());
                 }
                 ColParts::Utf8 { parts, .. } => {
                     let mut dst = bp.0.add(lay.buf1_off);

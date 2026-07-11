@@ -421,7 +421,7 @@ impl Schema {
             });
             if placed.len() == before {
                 // Cycle: append the rest in declaration order.
-                placed.extend(remaining.drain(..));
+                placed.append(&mut remaining);
             }
         }
         placed

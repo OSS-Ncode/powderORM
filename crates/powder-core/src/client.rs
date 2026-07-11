@@ -818,10 +818,12 @@ fn run_query_params(
                     let builders = merge_chunks(chunks);
                     match order {
                         None => return Ok((finish_batch(builders, names)?, readonly)),
-                        Some((key, desc)) => match sort_built(builders, &names, key, desc) {
-                            Some(b) => return Ok((finish_batch(b, names)?, readonly)),
-                            None => {} // fall through to SQLite's sorter below
-                        },
+                        Some((key, desc)) => {
+                            // Unsortable key shape falls through to SQLite's sorter below.
+                            if let Some(b) = sort_built(builders, &names, key, desc) {
+                                return Ok((finish_batch(b, names)?, readonly));
+                            }
+                        }
                     }
                 }
             }
@@ -829,9 +831,9 @@ fn run_query_params(
 
         if let Some((key, desc)) = order {
             let (builders, names, readonly) = stream_query(conn, scan_sql, sql_params)?;
-            match sort_built(builders, &names, key, desc) {
-                Some(builders) => return Ok((finish_batch(builders, names)?, readonly)),
-                None => {} // unsupported key column shape — rerun with SQLite sort
+            // Unsupported key column shape — rerun with SQLite sort.
+            if let Some(builders) = sort_built(builders, &names, key, desc) {
+                return Ok((finish_batch(builders, names)?, readonly));
             }
         }
     }
@@ -885,6 +887,12 @@ fn parse_parallel_shape(sql: &str) -> Option<(Vec<String>, &str)> {
 /// Minimum rowid span before a scan is worth partitioning across threads.
 const PARALLEL_MIN_SPAN: i64 = 64 * 1024;
 
+/// One worker's scan output: column builders + names + read-only flag.
+type ScanChunk = (Vec<AdaptiveCol>, Vec<String>, bool);
+
+/// All workers' chunks (rowid order) + names + read-only flag.
+type ScanChunks = (Vec<Vec<AdaptiveCol>>, Vec<String>, bool);
+
 /// Range-partition `SELECT cols FROM table` by rowid across worker threads.
 /// Returns `Ok(None)` whenever any precondition fails — the caller then runs
 /// the ordinary serial scan. Chunks come back in rowid order, so their
@@ -894,7 +902,7 @@ fn try_parallel_scan(
     conn: &Connection,
     cols: &[String],
     table: &str,
-) -> Result<Option<(Vec<Vec<AdaptiveCol>>, Vec<String>, bool)>> {
+) -> Result<Option<ScanChunks>> {
     let Some(ctx) = ctx else { return Ok(None) };
 
     let threads = std::thread::available_parallelism()
@@ -989,11 +997,10 @@ fn try_parallel_scan(
     // it back with the result so it can return to the pool. rayon's resident
     // pool avoids spawning OS threads on every query.
     let (chunks, mut returned) = {
-        let mut slots: Vec<Option<(Connection, Result<(Vec<AdaptiveCol>, Vec<String>, bool)>)>> =
-            worker_conns
-                .drain(..)
-                .map(|c| Some((c, Err(Error::Join("scan task did not run".into())))))
-                .collect();
+        let mut slots: Vec<Option<(Connection, Result<ScanChunk>)>> = worker_conns
+            .drain(..)
+            .map(|c| Some((c, Err(Error::Join("scan task did not run".into())))))
+            .collect();
         rayon::scope(|s| {
             for (slot, &(lo, hi)) in slots.iter_mut().zip(&bounds) {
                 let scan_sql = &scan_sql;
@@ -1616,7 +1623,7 @@ impl AdaptiveCol {
         let validity = if nullable {
             // All-valid template, then clear the (typically few) null bits.
             let mut bits = vec![0xFFu8; self.len.div_ceil(8)];
-            if self.len % 8 != 0 {
+            if !self.len.is_multiple_of(8) {
                 *bits.last_mut().unwrap() = (1u8 << (self.len % 8)) - 1;
             }
             for &i in &self.nulls {

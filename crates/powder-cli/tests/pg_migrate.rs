@@ -2,7 +2,7 @@
 //! points at a reachable server. Without the env var it passes as a skip, so
 //! machines without Postgres stay green.
 
-use powder_cli::db::{self, AnyConn};
+use powder_cli::db::{self};
 use powder_cli::schema::Schema;
 
 #[test]

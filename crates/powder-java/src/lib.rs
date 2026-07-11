@@ -16,7 +16,8 @@
 //! - `query(long, String sql, String paramsJson) -> byte[]`   PCB payload
 //! - `close(long)`   frees the connection
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use jni::objects::{JByteBuffer, JClass, JObject, JString};
 use jni::sys::{jbyteArray, jlong, jobject};
@@ -25,10 +26,27 @@ use tokio::runtime::Runtime;
 
 use powder_core::{Client, Value};
 
+// The columnar build path is allocation-heavy; the platform default heap
+// (especially on Windows) measurably slows cold queries. Same setup as the
+// Node binding.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Shared multi-thread runtime backing every blocking JNI call.
 fn rt() -> &'static Runtime {
     static RT: OnceLock<Runtime> = OnceLock::new();
     RT.get_or_init(|| Runtime::new().expect("powder JNI: failed to start tokio runtime"))
+}
+
+/// PCB buffers handed to the JVM as `DirectByteBuffer`s, keyed by data
+/// address. Holding the `Arc` here keeps the (possibly cache-shared) buffer
+/// alive without copying it; `freeBuffer` drops the reference. The `Vec`
+/// handles the same cached buffer being handed out more than once before the
+/// first `freeBuffer` (identical address).
+fn direct_bufs() -> &'static Mutex<HashMap<usize, Vec<Arc<Vec<u8>>>>> {
+    type BufferMap = Mutex<HashMap<usize, Vec<Arc<Vec<u8>>>>>;
+    static M: OnceLock<BufferMap> = OnceLock::new();
+    M.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn jstr(env: &mut JNIEnv, s: &JString) -> String {
@@ -139,8 +157,10 @@ pub extern "system" fn Java_com_powder_PowderNative_query<'l>(
         }
     };
     let client = unsafe { client(handle) };
-    match rt().block_on(client.query_bytes(&sql, vals)) {
-        Ok(bytes) => match env.byte_array_from_slice(&bytes) {
+    // shared(Arc) 경로: 캐시 히트 시 query_bytes()가 하던 전체 버퍼 복제를
+    // 건너뛰고 byte[] 생성의 1회 복사만 남긴다.
+    match rt().block_on(client.query_bytes_shared(&sql, vals)) {
+        Ok(bytes) => match env.byte_array_from_slice(bytes.as_ref()) {
             Ok(arr) => arr.into_raw(),
             Err(e) => {
                 throw(&mut env, e.to_string());
@@ -176,7 +196,7 @@ pub extern "system" fn Java_com_powder_PowderNative_queryDirect<'l>(
         }
     };
     let client = unsafe { client(handle) };
-    let bytes = match rt().block_on(client.query_bytes(&sql, vals)) {
+    let bytes = match rt().block_on(client.query_bytes_shared(&sql, vals)) {
         Ok(b) => b,
         Err(e) => {
             throw(&mut env, e.to_string());
@@ -184,27 +204,46 @@ pub extern "system" fn Java_com_powder_PowderNative_queryDirect<'l>(
         }
     };
 
-    // `into_boxed_slice` makes capacity == length, so `freeBuffer` can rebuild
-    // the exact allocation from (pointer, length) alone.
-    let boxed: Box<[u8]> = bytes.into_boxed_slice();
-    let len = boxed.len();
-    let ptr = Box::into_raw(boxed) as *mut u8;
+    let ptr = bytes.as_ptr() as *mut u8;
+    let len = bytes.len();
     if len == 0 {
-        // A direct buffer over a dangling pointer is not allowed; reclaim and
-        // hand back an empty (heap) buffer via the byte[] path instead.
-        unsafe { drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, 0))) };
         throw(&mut env, "empty PCB payload");
         return std::ptr::null_mut();
     }
-    // Safety: `ptr` owns `len` initialized bytes and stays alive until the
-    // matching `freeBuffer` call; the JVM only reads through the buffer.
+    // 무복사 핸드오프: Arc를 레지스트리에 보관해 버퍼를 살려두고 그 데이터
+    // 포인터를 그대로 JVM에 넘긴다. 캐시 히트 시 복사가 0회가 된다.
+    // `freeBuffer(address, length)`가 레지스트리에서 참조를 내린다.
+    direct_bufs()
+        .lock()
+        .unwrap()
+        .entry(ptr as usize)
+        .or_default()
+        .push(bytes);
+    // Safety: the registry keeps the allocation alive until the matching
+    // `freeBuffer` call; the JVM only reads through the buffer.
     match unsafe { env.new_direct_byte_buffer(ptr, len) } {
         Ok(buf) => buf.into_raw(),
         Err(e) => {
-            unsafe { drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len))) };
+            release_direct_buf(ptr as usize);
             throw(&mut env, e.to_string());
             std::ptr::null_mut()
         }
+    }
+}
+
+/// Drop one registry reference for `addr`. Returns true when it was a
+/// registered shared buffer.
+fn release_direct_buf(addr: usize) -> bool {
+    let mut map = direct_bufs().lock().unwrap();
+    match map.get_mut(&addr) {
+        Some(v) => {
+            v.pop();
+            if v.is_empty() {
+                map.remove(&addr);
+            }
+            true
+        }
+        None => false,
     }
 }
 
@@ -233,7 +272,13 @@ pub extern "system" fn Java_com_powder_PowderNative_freeBuffer(
     if address == 0 || length <= 0 {
         return;
     }
-    // Safety: mirrors the `Box::into_raw(into_boxed_slice())` in `queryDirect`.
+    // Shared PCB buffers live in the registry; dropping the Arc reference is
+    // the whole "free". The Box path remains as a fallback for any older
+    // caller still holding a `Box::into_raw` buffer.
+    if release_direct_buf(address as usize) {
+        return;
+    }
+    // Safety: mirrors the historical `Box::into_raw(into_boxed_slice())` handoff.
     unsafe {
         drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
             address as *mut u8,

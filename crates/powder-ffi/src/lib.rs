@@ -24,13 +24,20 @@
 //!   call on that thread.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::{c_char, CStr, CString};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::runtime::Runtime;
 
 use powder_core::orm::{Orm, OrmSchema};
 use powder_core::{Client, Value};
+
+// The columnar build path is allocation-heavy; the platform default heap
+// (especially on Windows) measurably slows cold queries. Same setup as the
+// Node binding. Go/C/C++ hosts all benefit through this cdylib.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 thread_local! {
     static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
@@ -49,6 +56,33 @@ fn clear_error() {
 fn rt() -> &'static Runtime {
     static RT: OnceLock<Runtime> = OnceLock::new();
     RT.get_or_init(|| Runtime::new().expect("powder FFI: failed to start tokio runtime"))
+}
+
+/// PCB buffers handed out by [`powder_query`], keyed by data address. Holding
+/// the `Arc` keeps the (possibly cache-shared) buffer alive without copying
+/// it; [`powder_free_buffer`] drops the reference. The `Vec` handles the same
+/// cached buffer being handed out more than once before the first free
+/// (identical address).
+fn shared_bufs() -> &'static Mutex<HashMap<usize, Vec<Arc<Vec<u8>>>>> {
+    type BufferMap = Mutex<HashMap<usize, Vec<Arc<Vec<u8>>>>>;
+    static M: OnceLock<BufferMap> = OnceLock::new();
+    M.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Drop one registry reference for `addr`. Returns true when it was a
+/// registered shared buffer.
+fn release_shared_buf(addr: usize) -> bool {
+    let mut map = shared_bufs().lock().unwrap();
+    match map.get_mut(&addr) {
+        Some(v) => {
+            v.pop();
+            if v.is_empty() {
+                map.remove(&addr);
+            }
+            true
+        }
+        None => false,
+    }
 }
 
 /// Read a borrowed C string. Returns `None` for NULL or invalid UTF-8.
@@ -189,14 +223,28 @@ pub unsafe extern "C" fn powder_query(
             return std::ptr::null_mut();
         }
     };
-    match rt().block_on((*handle).query_bytes(sql, vals)) {
+    match rt().block_on((*handle).query_bytes_shared(sql, vals)) {
         Ok(bytes) => {
-            // `into_boxed_slice` makes capacity == length, so `free_buffer` can
-            // rebuild the exact allocation from (pointer, len) alone.
-            let boxed: Box<[u8]> = bytes.into_boxed_slice();
-            let len = boxed.len();
+            let len = bytes.len();
+            if len == 0 {
+                // A dangling pointer must not cross the ABI; hand out a real
+                // (boxed) empty allocation the old way. free ignores len == 0.
+                *out_len = 0;
+                return Box::into_raw(Vec::<u8>::new().into_boxed_slice()) as *mut u8;
+            }
+            // 무복사 핸드오프: Arc를 레지스트리에 보관해 버퍼를 살려두고 그
+            // 데이터 포인터를 그대로 넘긴다. 캐시 히트 시 기존
+            // `query_bytes()`가 하던 전체 버퍼 복제가 사라진다. 호스트의
+            // `powder_free_buffer`가 레지스트리에서 참조를 내린다.
+            let ptr = bytes.as_ptr() as *mut u8;
+            shared_bufs()
+                .lock()
+                .unwrap()
+                .entry(ptr as usize)
+                .or_default()
+                .push(bytes);
             *out_len = len;
-            Box::into_raw(boxed) as *mut u8
+            ptr
         }
         Err(e) => {
             set_error(e.to_string());
@@ -253,6 +301,12 @@ pub unsafe extern "C" fn powder_last_error_copy(dst: *mut u8, cap: usize) -> usi
 #[no_mangle]
 pub unsafe extern "C" fn powder_free_buffer(ptr: *mut u8, len: usize) {
     if ptr.is_null() || len == 0 {
+        return;
+    }
+    // Shared PCB buffers ([`powder_query`]) live in the registry; dropping the
+    // Arc reference is the whole "free". Box reclaim remains for buffers that
+    // really are `Box::into_raw` allocations ([`powder_orm_find_json`]).
+    if release_shared_buf(ptr as usize) {
         return;
     }
     drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)));

@@ -51,12 +51,12 @@ impl PgBackend {
         // statements) needs `batch_execute`. Route by shape.
         if params.is_empty() && sql.contains(';') {
             conn.batch_execute(&sql)
-                .map_err(|e| pg_err(e))?;
+                .map_err(pg_err)?;
             return Ok(0);
         }
         let n = conn
             .execute(sql.as_str(), &refs)
-            .map_err(|e| pg_err(e))?;
+            .map_err(pg_err)?;
         Ok(n as usize)
     }
 
@@ -68,7 +68,7 @@ impl PgBackend {
         let mut conn = self.lock()?;
         let rows = conn
             .query(sql.as_str(), &refs)
-            .map_err(|e| pg_err(e))?;
+            .map_err(pg_err)?;
         drop(conn);
         rows_to_batch(&rows)
     }
