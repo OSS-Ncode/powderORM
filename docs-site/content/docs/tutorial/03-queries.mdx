@@ -1,0 +1,136 @@
+---
+title: "3장. 쿼리 제대로 쓰기"
+description: 필터·정렬·집계·include/join을 실전처럼
+---
+
+## 개념
+
+**필터**는 두 가지 형태를 섞어 쓸 수 있습니다:
+
+```ts
+db.users.where({ active: true })          // 객체 형태 — 여러 조건이 한 번에 AND
+db.users.where("score", ">=", 5)          // 3-인자 형태 — 연산자를 명시
+```
+
+3-인자 연산자: `=` `!=` `>` `>=` `<` `<=` `like` `in`. 반복 호출은 AND로
+합쳐집니다.
+
+**OR/AND/NOT**은 논리 키로 임의 깊이까지 중첩할 수 있습니다:
+
+```ts
+await db.users.findMany({
+  where: {
+    active: true,                 // 다른 조건들과 AND
+    OR: [
+      { score: { gte: 90 } },
+      { name: { like: "vip%" } },
+    ],
+    NOT: { banned: true },
+  },
+});
+```
+
+**`include` vs `join`**은 목적이 다릅니다:
+
+- `include` — 관계 레벨당 배치 IN 쿼리 1번. `hasMany`/`belongsTo` 둘 다 됨.
+  결과가 중첩 객체(`post.user`, `user.posts`)로 옵니다.
+- `join` — `belongsTo` 관계를 LEFT JOIN 한 번으로 붙입니다. `hasMany`에
+  쓰면 부모 행이 곱해지므로(1:N JOIN의 근본적인 문제) 명시적 오류가 납니다.
+
+**N+1이 왜 문제인가**: `posts`를 100개 가져온 뒤 각 글마다 따로
+`db.users.find(post.user_id)`를 부르면 쿼리가 101번 나갑니다. `include`는
+이걸 "posts 1번 + users 1번(IN 절)" = 2번으로 줄여줘요. 중첩
+include(`include: { user: { include: { posts: true } } }`)도 레벨마다
+1번씩만 나갑니다 — 아무리 깊어져도 깊이만큼만 쿼리가 늘어나지, 행
+개수만큼 늘어나지 않습니다.
+
+## 실습
+
+```ts
+// 정렬 + 페이지네이션
+const page = await db.users.orderBy("score", "desc").orderBy("id").paginate(2, 20);
+page.rows        // 이 페이지 행들
+page.total       // 전체 개수
+page.totalPages
+
+// 마무리 메서드
+await db.users.where("active", "=", true).count();
+await db.users.where("active", "=", true).exists();
+await db.users.pluck("name");        // 한 컬럼만 배열로
+await db.users.sum("score");         // sum/avg/min/max, 행 없으면 null
+
+// 관계 + 조건 섞기
+const activeUsersWithRecentPosts = await db.users.findMany({
+  where: { active: true },
+  include: {
+    posts: true,
+  },
+});
+```
+
+## 문제
+
+다음 조건을 만족하는 쿼리를 **N+1 없이** 한 번에 짜보세요:
+
+> "`active`가 true인 유저가 쓴 게시글 중, 댓글이 하나라도 달린 게시글을,
+> 최신순으로 가져오면서, 각 게시글의 작성자 이름과 댓글 작성자 이름까지
+> 같이 보고 싶다."
+
+(2장에서 만든 `comments` 테이블 기준입니다.)
+
+<details>
+<summary>힌트</summary>
+
+- "댓글이 하나라도 달린"은 `where` 조건이 아니라 필터링 대상이 `comments`
+  관계 자체이므로, 일단 `include`로 댓글까지 가져온 뒤 애플리케이션에서
+  걸러야 할지, 아니면 `comments`가 존재하는 게시글만 짚어내는 서브쿼리가
+  필요할지 고민해보세요 — Powder의 `findMany`/`where`는 관계의 "존재
+  여부"로 직접 필터링하는 문법을 제공하지 않습니다. 가장 실용적인 방법은
+  일단 `include`로 다 가져온 뒤 `.filter()`로 빈 배열인 것들을 걸러내는
+  것입니다.
+- "작성자 이름"은 게시글 쪽(`post.user`)과 댓글 쪽(`comment.user`) 둘 다
+  필요하므로 중첩 `include`가 두 군데 필요합니다.
+
+</details>
+
+<details>
+<summary>정답</summary>
+
+```ts
+const posts = await db.posts.findMany({
+  where: { user: { active: true } },   // author 조건은 관계 통해서가 아니라
+                                         // 실제로는 join 없이 안 되므로 아래처럼 접근
+});
+```
+
+위처럼 관계를 통한 `where`는 Powder가 지원하지 않으므로, 실전에서는
+**연관 유저의 조건을 먼저 걸어 유저 목록을 얻고**, 그 유저들의 글을
+가져오는 2단계로 나누거나, `include`로 다 가져온 뒤 걸러내는 게
+현실적입니다:
+
+```ts
+const posts = await db.posts.findMany({
+  include: {
+    user: true,
+    comments: { include: { user: true } },
+  },
+});
+
+const result = posts
+  .filter((p) => p.user?.active && p.comments.length > 0)
+  .sort((a, b) => b.id - a.id);   // "최신순" — id가 곧 생성 순서라고 가정
+
+result.forEach((p) => {
+  console.log(p.user?.name, "→", p.comments.map((c) => c.user?.name));
+});
+```
+
+쿼리는 `posts` 1번 + `user`(IN) 1번 + `comments`(IN) 1번 +
+`comments.user`(IN) 1번, 총 **4번** — 게시글이나 댓글이 몇 개든 이 숫자는
+안 늘어납니다. 정렬/필터링을 DB가 아니라 애플리케이션에서 하는 게
+아쉽다면, 이런 경우엔 [명명 쿼리](/docs/orm/queries-transactions)로 raw
+SQL을 직접 작성하는 것도 방법입니다.
+
+</details>
+
+마지막으로 앞 세 장을 종합한 문제들을 풀어보세요 → [4장. 실전 문제 모음](/docs/tutorial/04-practice)

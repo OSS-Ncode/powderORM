@@ -1,0 +1,137 @@
+---
+title: "1장. Powder 첫걸음"
+description: ORM이 뭘 해결하는지부터 첫 CRUD까지
+---
+
+프로그래밍 기초(터미널, npm, TypeScript/Python 문법)는 안다고 가정합니다.
+Powder 자체를 처음 쓰는 분을 위한 챕터입니다. 각 장은 **개념 → 실습 → 문제**
+순서로 되어 있어요.
+
+## 개념
+
+일반적인 SQL 드라이버는 쿼리를 문자열로 짜고, 결과를 행(row) 단위로 하나씩
+객체로 변환합니다. 행이 10만 개면 변환도 10만 번 일어나죠.
+
+Powder는 두 가지로 이 비용을 없앱니다:
+
+1. **단일 Rust 코어** — 9개 언어 바인딩이 전부 같은 엔진을 씁니다. 쿼리
+   생성·검증 로직이 언어마다 따로 없어서 버그 표면이 훨씬 작아요.
+2. **PCB(컬럼 버퍼)** — 결과를 행 단위가 아니라 **컬럼 단위로 한 번에** 언어
+   경계 너머로 넘깁니다. `[1,2,3]`, `["a","b","c"]`처럼 컬럼별로 묶어서
+   한 번만 복사하니 행 개수가 늘어도 변환 비용이 거의 안 늘어요.
+
+이 두 가지를 몰라도 API를 쓰는 데는 지장 없습니다 — 그냥 "왜 빠른지"의 배경입니다.
+
+## 실습
+
+```bash
+powder new my-app && cd my-app
+npm install
+```
+
+`powder new`가 만든 것들을 하나씩 열어보세요:
+
+- `powder.schema.json` — 테이블 정의. 이게 모든 것의 시작점입니다.
+- `seed.json` — 초기 데이터.
+- `src/main.ts` — 데모 스크립트.
+- `src/models.ts` — **생성된 파일**. 스키마에서 자동으로 나온 typed 모델이라 직접 손대지 않아요.
+
+```bash
+npm run migrate     # powder.schema.json 기준으로 CREATE TABLE 실행
+npm run seed        # seed.json 데이터 적재
+npm run generate    # src/models.ts 재생성
+```
+
+`migrate`는 스키마에 있는데 DB에 없는 테이블/컬럼만 추가합니다(가산적).
+`seed`는 `seed.json`을 그대로 insert합니다. `generate`는 스키마를 typed
+코드로 컴파일합니다 — 스키마를 고칠 때마다 다시 실행해야 해요.
+
+이제 첫 쿼리를 짜봅니다:
+
+```ts
+import { Client } from "@powder/node";
+import { powder } from "./models.js";
+
+const db = powder(await Client.connect("app.db"));
+
+// Create
+await db.users.create({ id: 1, name: "alice", score: 9.5, active: true });
+
+// Read
+const alice = await db.users.find(1);              // PK로 단건 조회, 없으면 null
+const top = await db.users
+  .where("score", ">=", 5)                          // 컬럼, 연산자, 값 — 3-인자 형태
+  .orderBy("score", "desc")
+  .limit(10)
+  .all();
+
+// Update
+await db.users.update({ where: { id: 1 }, data: { score: 10 } });
+
+// Delete
+await db.users.delete({ where: { id: 1 } });
+```
+
+`node src/main.ts`(또는 프로젝트에 맞는 실행 명령)로 실행해서 실제로 값이
+나오는지 확인하세요. 아무것도 안 나오면 `migrate`/`seed`를 다시
+실행했는지부터 확인하세요 — 이 챕터 실습에서 가장 흔한 실수입니다.
+
+## 문제
+
+`users` 테이블에 `email`(text, nullable 아님) 컬럼을 추가하고, 다음 4가지를
+직접 구현하세요:
+
+1. `email`까지 포함해서 새 유저 생성
+2. 이메일로 유저 찾기 (`find`가 아니라 `where` + `first()` 사용)
+3. 특정 유저의 이메일 수정
+4. 특정 유저 삭제
+
+<details>
+<summary>힌트</summary>
+
+- 스키마 컬럼 추가 후에는 `npm run migrate`와 `npm run generate`를 **둘 다**
+  다시 돌려야 합니다. 하나만 하면 타입은 그대로인데 DB만 바뀌거나, 그 반대
+  상황이 됩니다.
+- 이메일로 찾는 건 PK 조회가 아니므로 `find()`가 아니라
+  `db.users.where("email", "=", "...").first()`를 씁니다.
+
+</details>
+
+<details>
+<summary>정답</summary>
+
+`powder.schema.json`:
+```json
+"users": {
+  "columns": {
+    "id":     { "type": "int",   "primaryKey": true },
+    "name":   { "type": "text" },
+    "score":  { "type": "float", "nullable": true },
+    "active": { "type": "bool" },
+    "email":  { "type": "text" }
+  }
+}
+```
+
+```bash
+npm run migrate
+npm run generate
+```
+
+```ts
+// 1. 생성
+await db.users.create({ id: 2, name: "bob", score: 7, active: true, email: "bob@example.com" });
+
+// 2. 이메일로 찾기
+const bob = await db.users.where("email", "=", "bob@example.com").first();
+
+// 3. 수정
+await db.users.update({ where: { id: 2 }, data: { email: "bob2@example.com" } });
+
+// 4. 삭제
+await db.users.delete({ where: { id: 2 } });
+```
+
+</details>
+
+다음 장에서는 테이블 사이의 관계(FK)를 다룹니다 → [2장. 스키마와 관계](/docs/tutorial/02-schema-relations)
