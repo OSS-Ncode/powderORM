@@ -27,7 +27,7 @@ Windows (P:\oss-Ncode) ──저장──▶ NAS (\\100.123.184.127\Ncode)
 |---|---|---|
 | `docs-site-sync.sh` | `/Users/server/apps/` | NAS → 로컬 rsync 루프 (이번에 추가) |
 | `com.powder.docs-site-sync.plist` | `~/Library/LaunchAgents/` | 위 스크립트를 로그인 시 자동 실행 |
-| `docs-site-watch.sh` | `/Users/server/apps/` | 로컬 변경 감지 → 빌드 → out/commit-feed.json 심볼릭 링크 재생성 → 재시작 (이번에 심볼릭 링크 스텝 추가, 기록 사본도 이번에 추가) |
+| `docs-site-watch.sh` | `/Users/server/apps/` | 로컬 변경 감지 → 빌드 → commit-feed/feed.json을 out/commit-feed.json으로 복사(cp -f) → 재시작 (이번에 복사 스텝 추가 — 처음엔 심볼릭 링크였으나 serve가 심볼릭 링크 서빙을 거부해서 cp로 변경, 기록 사본도 이번에 추가) |
 | (기존) `com.powder.docs-site*.plist` | `/Library/LaunchDaemons/` | serve 데몬 + watch 데몬 |
 | `commit-feed-append.py` | `/Users/server/apps/` | 커밋 1개를 받아 Ollama로 언어별 요약 후 feed.json에 append (이번에 추가) |
 | `commit-feed-backfill.py` | `/Users/server/apps/` | 최초 1회 실행용 — 최근 50개 커밋 백필 (이번에 추가) |

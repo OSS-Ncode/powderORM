@@ -27,7 +27,8 @@ while true; do
       if npm run build; then
         # serve 패키지가 심볼릭 링크를 통한 서빙을 거부해서(보안, 실측
         # 확인됨) 링크 대신 실제 파일로 복사한다.
-        cp -f /Users/server/apps/commit-feed/feed.json "$APP_DIR/out/commit-feed.json" 2>/dev/null
+        cp -f /Users/server/apps/commit-feed/feed.json "$APP_DIR/out/commit-feed.json" 2>/dev/null \
+          || echo "[docs-site-watch] $(date '+%H:%M:%S') commit-feed.json 복사 실패 (feed.json 없거나 권한 문제 — 첫 실행이면 정상)"
         launchctl kickstart -k system/com.powder.docs-site
         echo "[docs-site-watch] $(date '+%H:%M:%S') 빌드 및 재시작 완료"
       else
