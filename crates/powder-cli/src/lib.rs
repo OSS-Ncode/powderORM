@@ -2,8 +2,11 @@
 
 pub mod cli;
 pub mod codegen;
+pub mod config;
 pub mod db;
 pub mod dialect;
 pub mod jsonschema;
-pub mod schema;
 pub mod scaffold;
+pub mod schema;
+pub mod setup;
+pub mod tools;

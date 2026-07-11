@@ -18,3 +18,6 @@ powder-core = { workspace = true, features = ["postgres", "mysql", "mssql", "lib
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39"] }
 pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
+# The columnar build path is allocation-heavy; the platform default heap
+# (especially on Windows) measurably slows cold queries. Same as powder-node.
+mimalloc = "0.1"

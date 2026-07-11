@@ -122,6 +122,24 @@ fn shout(name: &str) -> String {
     name.to_ascii_uppercase()
 }
 
+/// camelCase → snake_case. Python codegen exposes named queries with
+/// snake_case names/kwargs (matching the rest of the Python runtime API)
+/// while the SQL param names keep their original schema spelling.
+fn snake(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    for c in name.chars() {
+        if c.is_ascii_uppercase() {
+            if !out.is_empty() && !out.ends_with('_') {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn column_list(table: &Table) -> String {
     table
         .columns
@@ -465,10 +483,12 @@ pub fn python(schema: &Schema) -> String {
         out.push_str("    def __init__(self, client: Client):\n");
         out.push_str("        self._client = client\n\n");
         for q in &schema.queries {
+            // Python surface is snake_case (matching the runtime API); the SQL
+            // param dict keys keep the schema's original spelling.
             let kwargs: Vec<String> = q
                 .params
                 .iter()
-                .map(|(n, t)| format!("{n}: {}", t.py_type()))
+                .map(|(n, t)| format!("{}: {}", snake(n), t.py_type()))
                 .collect();
             let sig = if kwargs.is_empty() {
                 String::new()
@@ -479,7 +499,10 @@ pub fn python(schema: &Schema) -> String {
                 Some(table) => format!("list[{}]", pascal(table)),
                 None => "list".to_string(),
             };
-            out.push_str(&format!("    async def {}(self{sig}) -> {ret}:\n", q.name));
+            out.push_str(&format!(
+                "    async def {}(self{sig}) -> {ret}:\n",
+                snake(&q.name)
+            ));
             out.push_str(&format!(
                 "        \"\"\"``{}``\"\"\"\n",
                 q.source_sql.replace('\n', " ")
@@ -491,7 +514,7 @@ pub fn python(schema: &Schema) -> String {
                     "{{{}}}",
                     q.params
                         .iter()
-                        .map(|(n, _)| format!("\"{n}\": {n}"))
+                        .map(|(n, _)| format!("\"{n}\": {}", snake(n)))
                         .collect::<Vec<_>>()
                         .join(", ")
                 )
@@ -594,10 +617,12 @@ mod tests {
 
         let py = python(&schema);
         assert!(py.contains("run_named_query"), "{py}");
-        assert!(py.contains("async def topUsers(self, *, active: bool, minScore: float) -> list[Users]:"), "{py}");
+        // Python surface is snake_case (docs: `db.queries.top_users(min_score=...)`);
+        // the SQL param dict keys keep the schema's camelCase spelling.
+        assert!(py.contains("async def top_users(self, *, active: bool, min_score: float) -> list[Users]:"), "{py}");
         assert!(py.contains("self.queries = PowderQueries(client)"), "{py}");
         assert!(py.contains("active = ? AND score >= ?"), "{py}");
-        assert!(py.contains("{\"active\": active, \"minScore\": minScore}"), "{py}");
+        assert!(py.contains("{\"active\": active, \"minScore\": min_score}"), "{py}");
     }
 
     #[test]

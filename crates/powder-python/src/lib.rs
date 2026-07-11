@@ -16,6 +16,12 @@ use pyo3_async_runtimes::tokio::future_into_py;
 
 use powder_core::{Client as CoreClient, Value};
 
+// The columnar build path is allocation-heavy; the platform default heap
+// (especially on Windows) measurably slows cold queries. Same setup as the
+// Node binding.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn to_pyerr(e: powder_core::Error) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
@@ -99,8 +105,13 @@ impl Client {
         let inner = self.inner.clone();
         let values = to_values(params);
         future_into_py(py, async move {
-            let bytes = inner.query_bytes(&sql, values).await.map_err(to_pyerr)?;
-            Python::attach(|py| Ok(PyBytes::new(py, &bytes).unbind()))
+            // shared(Arc) 경로: 캐시 히트 시 query_bytes()가 하던 전체 버퍼
+            // 복제를 건너뛰고, PyBytes 생성의 1회 복사만 남긴다.
+            let bytes = inner
+                .query_bytes_shared(&sql, values)
+                .await
+                .map_err(to_pyerr)?;
+            Python::attach(|py| Ok(PyBytes::new(py, bytes.as_ref()).unbind()))
         })
     }
 }

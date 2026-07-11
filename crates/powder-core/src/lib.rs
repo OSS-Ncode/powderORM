@@ -34,6 +34,7 @@ pub mod client;
 pub mod codec;
 pub mod error;
 pub mod guard;
+pub mod inspect;
 #[cfg(feature = "libsql")]
 pub mod ls;
 #[cfg(feature = "mssql")]

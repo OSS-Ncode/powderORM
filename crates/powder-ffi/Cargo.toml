@@ -15,3 +15,6 @@ crate-type = ["cdylib", "staticlib"]
 powder-core = { workspace = true, features = ["postgres", "mysql", "mssql", "libsql"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread"] }
+# The columnar build path is allocation-heavy; the platform default heap
+# (especially on Windows) measurably slows cold queries. Same as powder-node.
+mimalloc = "0.1"
