@@ -1,0 +1,18 @@
+[package]
+name = "powder-studio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Powder studio — embedded web dashboard (mobile-friendly, token invites) and AI query generation, separable from the CLI for staged deployment"
+
+[dependencies]
+powder-core = { workspace = true, features = ["postgres", "mysql", "mssql", "libsql"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+# Embedded dashboard's HTTP server (small, synchronous).
+tiny_http = "0.12"
+# Unguessable access tokens.
+getrandom = "0.3"
+# Blocking HTTP client for the OpenAI-compatible AI endpoint.
+ureq = { version = "2", features = ["json"] }

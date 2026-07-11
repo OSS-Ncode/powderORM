@@ -64,16 +64,5 @@ jobs:
           maturin develop
           pytest tests
 
-  docs:
-    name: Docs — build check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Build docs-site (static export)
-        working-directory: docs-site
-        run: |
-          npm install --no-audit --no-fund
-          npm run build
+  # NOTE: no docs job — docs-site/ is intentionally .gitignored (deployed from a
+  # separate server), so CI has nothing to build there.
