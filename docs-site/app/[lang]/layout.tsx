@@ -1,5 +1,4 @@
 import { Provider } from '@/components/provider';
-import { SiteFooter } from '@/components/site-footer';
 import { i18n } from '@/lib/i18n';
 import type { ReactNode } from 'react';
 
@@ -11,12 +10,7 @@ export default async function LangLayout({
   children: ReactNode;
 }) {
   const { lang } = await params;
-  return (
-    <Provider locale={lang}>
-      {children}
-      <SiteFooter lang={lang} />
-    </Provider>
-  );
+  return <Provider locale={lang}>{children}</Provider>;
 }
 
 export function generateStaticParams() {

@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { ArrowRight, Boxes, Gauge, Heart, ShieldCheck, FileCode2, Layers } from 'lucide-react';
 import { gitConfig } from '@/lib/shared';
 import { CommitFeed } from '@/components/commit-feed';
+import { VisitorStats } from '@/components/visitor-stats';
+import { SiteFooter } from '@/components/site-footer';
 
 // lucide-react (this version) ships no brand icons, so inline the GitHub mark.
 function GithubMark({ className }: { className?: string }) {
@@ -289,6 +291,7 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
   const t = copy[lang] ?? copy.ko;
 
   return (
+    <>
     <main className="flex flex-1 flex-col">
       {/* Hero */}
       <section className="relative overflow-hidden border-b border-fd-border">
@@ -417,44 +420,44 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
         </div>
       </section>
 
-      {/* Sponsor */}
-      <section className="relative overflow-hidden border-t border-fd-border">
-        <div
-          className="pointer-events-none absolute inset-0 opacity-60"
-          style={{
-            background:
-              'radial-gradient(60% 60% at 50% 100%, color-mix(in oklab, var(--color-fd-primary) 14%, transparent) 0%, transparent 70%)',
-          }}
-        />
-        <div className="relative mx-auto flex max-w-3xl flex-col items-center px-6 py-20 text-center">
-          <div className="mb-4 inline-flex size-12 items-center justify-center rounded-full bg-fd-primary/10 text-fd-primary">
-            <Heart className="size-6" />
+      {/* Live feed + Sponsor */}
+      <section className="border-t border-fd-border">
+        <div className="mx-auto max-w-5xl px-6 py-20">
+          <div className="grid gap-10 md:grid-cols-2">
+            <div>
+              <h2 className="text-2xl font-semibold">{t.feedHeading}</h2>
+              <p className="mt-3 text-fd-muted-foreground">{t.feedBody}</p>
+              <div className="mt-6">
+                <CommitFeed lang={lang} />
+              </div>
+            </div>
+            <div className="flex flex-col items-center text-center md:items-start md:text-left">
+              <div className="mb-4 inline-flex size-12 items-center justify-center rounded-full bg-fd-primary/10 text-fd-primary">
+                <Heart className="size-6" />
+              </div>
+              <h2 className="text-2xl font-semibold">{t.sponsorHeading}</h2>
+              <p className="mt-3 text-balance text-fd-muted-foreground">{t.sponsorBody}</p>
+              <a
+                href={SPONSOR_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-6 inline-flex items-center gap-2 rounded-lg bg-fd-primary px-5 py-2.5 font-medium text-fd-primary-foreground transition-opacity hover:opacity-90"
+              >
+                <Heart className="size-4" />
+                {t.sponsorCta}
+              </a>
+              <p className="mt-3 text-xs text-fd-muted-foreground">fairy.hada.io</p>
+            </div>
           </div>
-          <h2 className="text-2xl font-semibold">{t.sponsorHeading}</h2>
-          <p className="mt-3 max-w-xl text-balance text-fd-muted-foreground">{t.sponsorBody}</p>
-          <a
-            href={SPONSOR_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-6 inline-flex items-center gap-2 rounded-lg bg-fd-primary px-5 py-2.5 font-medium text-fd-primary-foreground transition-opacity hover:opacity-90"
-          >
-            <Heart className="size-4" />
-            {t.sponsorCta}
-          </a>
-          <p className="mt-3 text-xs text-fd-muted-foreground">fairy.hada.io</p>
+
+          <div className="mt-16 border-t border-fd-border pt-10">
+            <VisitorStats lang={lang} />
+          </div>
         </div>
       </section>
 
-      {/* Commit feed */}
-      <section className="border-t border-fd-border">
-        <div className="mx-auto flex max-w-2xl flex-col items-center px-6 py-20">
-          <h2 className="text-2xl font-semibold">{t.feedHeading}</h2>
-          <p className="mt-3 text-center text-fd-muted-foreground">{t.feedBody}</p>
-          <div className="mt-6 w-full">
-            <CommitFeed lang={lang} />
-          </div>
-        </div>
-      </section>
     </main>
+    <SiteFooter lang={lang} />
+    </>
   );
 }
