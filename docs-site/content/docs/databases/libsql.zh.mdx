@@ -1,0 +1,39 @@
+---
+title: libSQL (sqld / Turso)
+description: 用 SQLite 方言连接远程服务器 — authToken、tls=false
+---
+
+libSQL 后端连接远程 sqld 服务器（包括 Turso）。libSQL 使用 SQLite 方言，
+因此**完全不需要 SQL 重写** — `?` 占位符、`BEGIN IMMEDIATE`、保存点都和
+SQLite 上一模一样。
+
+## 连接
+
+```
+libsql://host[:port]?authToken=…             HTTPS 远程（Turso、sqld）
+libsql://host[:port]?tls=false               本地 sqld — 明文 HTTP
+libsql://host?tls=false&authToken=…          可组合
+```
+
+使用 Turso 时，把控制台签发的令牌填入 `authToken` 即可。
+
+## 工作方式
+
+- **纯 SQLite 方言** — 代码、模式和迁移与 SQLite 完全一致；
+  `powder ddl`/`migrate` 也使用 SQLite 方言。
+- **连接时自动执行 `PRAGMA foreign_keys=ON`**（与本地 SQLite 不同，你无法
+  亲自配置远程连接，引擎替你开启）。
+- **动态类型** — libSQL 的值和 SQLite 一样是动态类型，列的 PCB 类型由第一个
+  非 NULL 值推断。
+- libsql crate 仅支持异步；引擎用内部运行时封装，对外提供与其他后端相同的
+  同步接口 — 调用方感知不到差异。
+
+## 无结果缓存
+
+无法感知远程服务器上其他客户端的写入，因此缓存关闭。重复查询缓存是本地
+SQLite 专属优化。
+
+## 注意事项
+
+- TLS 校验遵循 libsql crate 的 rustls 链。对于不可信网络上的服务器，请务必
+  使用 HTTPS（不要用 `tls=false`）并携带令牌。

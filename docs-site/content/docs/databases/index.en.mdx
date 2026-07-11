@@ -19,9 +19,9 @@ libsql://host[?tls=false][&authToken=…]             → libSQL (sqld / Turso)
 | [SQLite](/en/docs/databases/sqlite) (default) | ✅ | ✅ | ✅ (incl. `--rebuild`) | ✅ |
 | [PostgreSQL](/en/docs/databases/postgres) | ✅ | ✅ | ✅ | — |
 | [MySQL / MariaDB](/en/docs/databases/mysql) | ✅ | ✅ | ✅ | — |
-| CockroachDB (PG wire) | ✅ | ✅ | ✅ | — |
-| SQL Server | ✅ | ✅ (`--dialect mssql`) | ✅ | — |
-| libSQL (sqld / Turso) | ✅ | ✅ (same as SQLite) | ✅ | — |
+| [CockroachDB](/en/docs/databases/cockroachdb) (PG wire) | ✅ | ✅ | ✅ | — |
+| [SQL Server](/en/docs/databases/sqlserver) | ✅ | ✅ (`--dialect mssql`) | ✅ | — |
+| [libSQL](/en/docs/databases/libsql) (sqld / Turso) | ✅ | ✅ (same as SQLite) | ✅ | — |
 
 - **CockroachDB** works through the PostgreSQL driver as-is (`postgres://` URL).
 - **SQL Server**: the ORM renders `limit` as `TOP (n)` and `offset` as

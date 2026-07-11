@@ -19,9 +19,9 @@ libsql://host[?tls=false][&authToken=…]             → libSQL (sqld / Turso)
 | [SQLite](/ko/docs/databases/sqlite) (기본) | ✅ | ✅ | ✅ (`--rebuild` 포함) | ✅ |
 | [PostgreSQL](/ko/docs/databases/postgres) | ✅ | ✅ | ✅ | — |
 | [MySQL / MariaDB](/ko/docs/databases/mysql) | ✅ | ✅ | ✅ | — |
-| CockroachDB (PG wire) | ✅ | ✅ | ✅ | — |
-| SQL Server | ✅ | ✅ (`--dialect mssql`) | ✅ | — |
-| libSQL (sqld / Turso) | ✅ | ✅ (SQLite와 동일) | ✅ | — |
+| [CockroachDB](/ko/docs/databases/cockroachdb) (PG wire) | ✅ | ✅ | ✅ | — |
+| [SQL Server](/ko/docs/databases/sqlserver) | ✅ | ✅ (`--dialect mssql`) | ✅ | — |
+| [libSQL](/ko/docs/databases/libsql) (sqld / Turso) | ✅ | ✅ (SQLite와 동일) | ✅ | — |
 
 - **CockroachDB**는 PostgreSQL 드라이버로 그대로 동작해요 (`postgres://` URL).
 - **SQL Server**: ORM의 `limit`은 `TOP (n)`으로, `offset`은 `OFFSET … FETCH`

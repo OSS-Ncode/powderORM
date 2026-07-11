@@ -19,9 +19,9 @@ libsql://host[?tls=false][&authToken=…]             → libSQL (sqld / Turso)
 | [SQLite](/ja/docs/databases/sqlite) (デフォルト) | ✅ | ✅ | ✅ (`--rebuild` を含む) | ✅ |
 | [PostgreSQL](/ja/docs/databases/postgres) | ✅ | ✅ | ✅ | — |
 | [MySQL / MariaDB](/ja/docs/databases/mysql) | ✅ | ✅ | ✅ | — |
-| CockroachDB (PG wire) | ✅ | ✅ | ✅ | — |
-| SQL Server | ✅ | ✅ (`--dialect mssql`) | ✅ | — |
-| libSQL (sqld / Turso) | ✅ | ✅ (SQLiteと同じ) | ✅ | — |
+| [CockroachDB](/ja/docs/databases/cockroachdb) (PG wire) | ✅ | ✅ | ✅ | — |
+| [SQL Server](/ja/docs/databases/sqlserver) | ✅ | ✅ (`--dialect mssql`) | ✅ | — |
+| [libSQL](/ja/docs/databases/libsql) (sqld / Turso) | ✅ | ✅ (SQLiteと同じ) | ✅ | — |
 
 - **CockroachDB**はPostgreSQLドライバーでそのまま動きます (`postgres://` URL)。
 - **SQL Server**: ORMの`limit`は`TOP (n)`、`offset`は`OFFSET … FETCH`

@@ -1,0 +1,36 @@
+---
+title: CockroachDB
+description: PG ワイヤ互換 — postgres:// のままで接続
+---
+
+CockroachDB は PostgreSQL のワイヤプロトコルをそのまま話すため、Powder では
+**専用バックエンドなしで PostgreSQL ドライバから直接**接続できます。
+ランタイムクエリもマイグレーションもフルサポートです。
+
+## 接続
+
+```
+postgres://user:pass@host:26257/dbname
+```
+
+`postgres://` URL をそのまま使えます（CockroachDB のデフォルトポートは 26257）。
+
+## 動作のしくみ
+
+- **プレースホルダは `?` のまま** — エンジンが自動で `$n` に変換します
+  （文字列リテラル・コメント・`::` キャストは保持）。
+- **DDL / マイグレーション** — `powder ddl --dialect postgres` が生成する
+  標準準拠の DDL（`BIGINT`/`DOUBLE PRECISION`/`TEXT`/`BOOLEAN`）を
+  CockroachDB はそのまま受け付け、`powder migrate --db postgres://...` も
+  同様に動作します。
+- **結果キャッシュなし** — サーバー DB は他クライアントの書き込みを検知
+  できないためキャッシュは無効です（正しさ優先）。
+
+## 知っておくこと
+
+CockroachDB は分散 DB であり、PostgreSQL の完全なクローンではありません —
+一部の PG 機能（ストアドプロシージャなど）は無い、または挙動が異なります。
+Powder が生成する DDL・ORM クエリは互換サブセット内ですが、raw SQL で
+PG 固有機能を使う場合は
+[CockroachDB 互換性ドキュメント](https://www.cockroachlabs.com/docs/stable/postgresql-compatibility)
+を確認してください。

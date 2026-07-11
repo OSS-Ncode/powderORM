@@ -1,0 +1,52 @@
+---
+title: SQL Server
+description: mssql:// — 自动 T-SQL 规范化，TOP/OFFSET FETCH 渲染
+---
+
+Microsoft SQL Server 通过专用的 `mssql` 后端连接。支持运行时查询、DDL 和
+迁移 — 方言差异由引擎吸收，为 SQLite 编写的代码可以原样运行。
+
+## 连接
+
+```
+mssql://user:pass@host:1433/dbname          SQL 认证
+mssql://host/dbname                          Windows 集成认证（仅限 Windows）
+mssql://user:pass@host/dbname?encrypt=true   TLS 加密（按需开启）
+```
+
+- `sqlserver://` 是等价的别名。默认端口 1433。
+- **省略用户名即选择 Windows 集成认证** — tiberius 仅在 Windows 上提供，
+  macOS/Linux 会以明确的错误拒绝（请使用 user:pass）。
+- 老版本服务器（如 2008）通常没有 TLS 证书，因此加密通过 `?encrypt=true`
+  按需开启。
+
+## 方言差异由引擎处理
+
+| SQLite/标准语法 | SQL Server 渲染 |
+|---|---|
+| `limit n` | `TOP (n)` |
+| `offset` | `OFFSET … FETCH`（2012+，需要 `orderBy`） |
+| `BEGIN IMMEDIATE` / `SAVEPOINT` / `RELEASE` | 自动规范化为 T-SQL 事务语句 |
+
+ORM 代码无需修改 — `db.users.orderBy("id").paginate(2, 20)` 这样的调用会
+自动渲染为 `OFFSET … FETCH`。
+
+## 类型映射
+
+| schema | SQL Server |
+|---|---|
+| int | BIGINT |
+| float | FLOAT |
+| text | NVARCHAR(400) — 可比较、可索引的 Unicode |
+| bool | BIT |
+
+## 迁移
+
+```bash
+powder ddl --dialect mssql               # 输出 CREATE TABLE
+powder migrate --db mssql://...          # INFORMATION_SCHEMA 内省 → 只应用需要的 DDL
+```
+
+## 无结果缓存
+
+服务器数据库无法感知其他客户端的写入，因此缓存关闭（这是 SQLite 专属优化）。

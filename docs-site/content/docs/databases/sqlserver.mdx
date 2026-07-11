@@ -1,0 +1,54 @@
+---
+title: SQL Server
+description: mssql:// — T-SQL 자동 정규화, TOP/OFFSET FETCH 렌더링
+---
+
+Microsoft SQL Server는 전용 `mssql` 백엔드로 붙습니다. 런타임 쿼리·DDL·
+마이그레이션을 지원하고, SQLite에서 쓰던 코드가 그대로 동작하도록 방언
+차이를 엔진이 흡수해요.
+
+## 연결
+
+```
+mssql://user:pass@host:1433/dbname          SQL 인증
+mssql://host/dbname                          Windows 통합 인증 (Windows 전용)
+mssql://user:pass@host/dbname?encrypt=true   TLS 암호화 (opt-in)
+```
+
+- `sqlserver://`도 같은 의미의 별칭이에요. 기본 포트 1433.
+- **유저를 생략하면 Windows 통합 인증**을 씁니다 — tiberius가 Windows에서만
+  제공하므로, macOS/Linux에서는 명확한 오류와 함께 거부돼요 (user:pass 필요).
+- 구형 서버(2008 등)는 TLS 인증서 없이 배포되는 경우가 많아 암호화는
+  `?encrypt=true`로 명시할 때만 켭니다.
+
+## 방언 차이는 엔진이 처리
+
+| SQLite/표준 문법 | SQL Server 렌더링 |
+|---|---|
+| `limit n` | `TOP (n)` |
+| `offset` | `OFFSET … FETCH` (2012+, `orderBy` 필수) |
+| `BEGIN IMMEDIATE` / `SAVEPOINT` / `RELEASE` | T-SQL 트랜잭션 문장으로 자동 정규화 |
+
+ORM 코드는 수정 없이 그대로 — `db.users.orderBy("id").paginate(2, 20)` 같은
+호출이 알아서 `OFFSET … FETCH`로 나갑니다.
+
+## 타입 매핑
+
+| schema | SQL Server |
+|---|---|
+| int | BIGINT |
+| float | FLOAT |
+| text | NVARCHAR(400) — 비교·인덱스 가능한 유니코드 |
+| bool | BIT |
+
+## 마이그레이션
+
+```bash
+powder ddl --dialect mssql               # CREATE TABLE 출력
+powder migrate --db mssql://...          # INFORMATION_SCHEMA introspection → 필요한 DDL만
+```
+
+## 결과 캐시 없음
+
+서버 DB는 다른 클라이언트의 쓰기를 감지할 수 없어 캐시를 끕니다 (SQLite 전용
+최적화).

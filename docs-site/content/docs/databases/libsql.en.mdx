@@ -1,0 +1,41 @@
+---
+title: libSQL (sqld / Turso)
+description: the SQLite dialect against a remote server — authToken, tls=false
+---
+
+The libSQL backend connects to a remote sqld server (including Turso). libSQL
+speaks the SQLite dialect, so there is **no SQL rewriting at all** — `?`
+placeholders, `BEGIN IMMEDIATE`, and savepoints work exactly as they do on
+SQLite.
+
+## Connecting
+
+```
+libsql://host[:port]?authToken=…             remote over HTTPS (Turso, sqld)
+libsql://host[:port]?tls=false               local sqld — plain HTTP
+libsql://host?tls=false&authToken=…          combinable
+```
+
+For Turso, put the token from your dashboard in `authToken`.
+
+## How it works
+
+- **Pure SQLite dialect** — code, schema, and migrations are identical to
+  SQLite; `powder ddl`/`migrate` use the SQLite dialect too.
+- **`PRAGMA foreign_keys=ON` is applied on connect** (unlike a local SQLite
+  connection you can't configure yourself, the engine turns it on for you).
+- **Dynamic typing** — libSQL values are dynamically typed like SQLite's, so a
+  column's PCB type is inferred from the first non-NULL value.
+- The libsql crate is async-only; the engine wraps it in an internal runtime
+  and exposes the same synchronous surface as every other backend — no
+  difference on the caller's side.
+
+## No result cache
+
+Writes from other clients on the remote server can't be detected, so the cache
+is off. The repeat-query cache is a local-SQLite-only optimization.
+
+## Good to know
+
+- TLS validation follows the libsql crate's rustls chain. For servers on
+  untrusted networks, always use HTTPS (no `tls=false`) plus a token.

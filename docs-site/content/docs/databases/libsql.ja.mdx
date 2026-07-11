@@ -1,0 +1,41 @@
+---
+title: libSQL (sqld / Turso)
+description: SQLite 方言のままリモートサーバーへ — authToken、tls=false
+---
+
+libSQL バックエンドはリモートの sqld サーバー（Turso 含む）に接続します。
+libSQL は SQLite 方言をそのまま話すため、**SQL の書き換えは一切ありません** —
+`?` プレースホルダ、`BEGIN IMMEDIATE`、セーブポイントまで SQLite と同じです。
+
+## 接続
+
+```
+libsql://host[:port]?authToken=…             HTTPS リモート（Turso、sqld）
+libsql://host[:port]?tls=false               ローカル sqld — 平文 HTTP
+libsql://host?tls=false&authToken=…          組み合わせも可
+```
+
+Turso ならダッシュボードで発行したトークンを `authToken` に入れてください。
+
+## 動作のしくみ
+
+- **純粋な SQLite 方言** — コード・スキーマ・マイグレーションは SQLite と
+  同一。`powder ddl`/`migrate` も SQLite 方言で動きます。
+- **接続時に `PRAGMA foreign_keys=ON` を自動適用**（ローカル SQLite と違い
+  リモート接続の設定は自分では触れないため、エンジンが代わりに有効化します）。
+- **動的型付け** — libSQL の値は SQLite 同様に動的型付けで、列の PCB 型は
+  最初の非 NULL 値から推論されます。
+- libsql クレートは async 専用ですが、エンジンが内部ランタイムでラップして
+  他バックエンドと同じ同期インターフェースを提供します — 呼び出し側に差は
+  ありません。
+
+## 結果キャッシュなし
+
+リモートサーバー上の他クライアントの書き込みを検知できないためキャッシュは
+無効です。リピートクエリキャッシュはローカル SQLite 専用の最適化です。
+
+## 知っておくこと
+
+- TLS 検証は libsql クレートの rustls チェーンに従います。信頼できない
+  ネットワーク上のサーバーには必ず HTTPS（`tls=false` を使わない）+
+  トークンを使ってください。

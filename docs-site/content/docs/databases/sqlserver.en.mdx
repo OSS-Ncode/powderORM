@@ -1,0 +1,54 @@
+---
+title: SQL Server
+description: mssql:// — automatic T-SQL normalization, TOP/OFFSET FETCH rendering
+---
+
+Microsoft SQL Server connects through the dedicated `mssql` backend. Runtime
+queries, DDL, and migrations are supported — and the engine absorbs the dialect
+differences so code written against SQLite keeps working.
+
+## Connecting
+
+```
+mssql://user:pass@host:1433/dbname          SQL authentication
+mssql://host/dbname                          Windows integrated auth (Windows-only)
+mssql://user:pass@host/dbname?encrypt=true   TLS encryption (opt-in)
+```
+
+- `sqlserver://` is an accepted alias. Default port 1433.
+- **Omitting the user selects Windows integrated auth** — tiberius provides it
+  on Windows only, so macOS/Linux reject it with a clear error (use user:pass).
+- Older servers (2008 era) often ship without a TLS certificate, so encryption
+  is opt-in via `?encrypt=true`.
+
+## The engine handles the dialect
+
+| SQLite/standard syntax | SQL Server rendering |
+|---|---|
+| `limit n` | `TOP (n)` |
+| `offset` | `OFFSET … FETCH` (2012+, requires `orderBy`) |
+| `BEGIN IMMEDIATE` / `SAVEPOINT` / `RELEASE` | normalized to T-SQL transaction statements |
+
+ORM code is unchanged — a call like `db.users.orderBy("id").paginate(2, 20)`
+renders as `OFFSET … FETCH` automatically.
+
+## Type mapping
+
+| schema | SQL Server |
+|---|---|
+| int | BIGINT |
+| float | FLOAT |
+| text | NVARCHAR(400) — comparable, indexable Unicode |
+| bool | BIT |
+
+## Migrations
+
+```bash
+powder ddl --dialect mssql               # print CREATE TABLE
+powder migrate --db mssql://...          # INFORMATION_SCHEMA introspection → only the DDL you need
+```
+
+## No result cache
+
+Server databases can't detect writes from other clients, so the cache is off
+(it's a SQLite-only optimization).

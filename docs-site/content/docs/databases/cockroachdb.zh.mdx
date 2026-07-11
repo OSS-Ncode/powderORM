@@ -1,0 +1,32 @@
+---
+title: CockroachDB
+description: 兼容 PG 线协议 — 直接用 postgres:// 连接
+---
+
+CockroachDB 使用 PostgreSQL 线协议，因此 Powder **无需单独的后端，直接通过
+PostgreSQL 驱动**连接。运行时查询和迁移全部支持。
+
+## 连接
+
+```
+postgres://user:pass@host:26257/dbname
+```
+
+直接使用 `postgres://` URL 即可（CockroachDB 默认端口为 26257）。
+
+## 工作方式
+
+- **占位符保持 `?`** — 引擎自动转换为 `$n`（字符串字面量、注释和 `::`
+  强制转换会被保留）。
+- **DDL / 迁移** — `powder ddl --dialect postgres` 生成的标准 DDL
+  （`BIGINT`/`DOUBLE PRECISION`/`TEXT`/`BOOLEAN`）CockroachDB 可直接接受，
+  `powder migrate --db postgres://...` 同样适用。
+- **无结果缓存** — 服务器数据库无法感知其他客户端的写入，因此缓存关闭
+  （正确性优先）。
+
+## 注意事项
+
+CockroachDB 是分布式数据库，并非完全等同于 PostgreSQL — 部分 PG 功能
+（存储过程等）缺失或行为不同。Powder 生成的 DDL 和 ORM 查询在兼容子集内，
+但如果在 raw SQL 中使用 PG 专有功能，请查阅
+[CockroachDB 兼容性文档](https://www.cockroachlabs.com/docs/stable/postgresql-compatibility)。

@@ -1,0 +1,35 @@
+---
+title: CockroachDB
+description: PG wire-compatible — connect with postgres:// as-is
+---
+
+CockroachDB speaks the PostgreSQL wire protocol, so Powder connects to it
+**through the PostgreSQL driver with no separate backend**. Runtime queries and
+migrations are fully supported.
+
+## Connecting
+
+```
+postgres://user:pass@host:26257/dbname
+```
+
+Use a plain `postgres://` URL (CockroachDB's default port is 26257).
+
+## How it works
+
+- **Placeholders stay `?`** — the engine converts them to `$n` automatically
+  (string literals, comments, and `::` casts are preserved).
+- **DDL / migrations** — the standards-compliant DDL from
+  `powder ddl --dialect postgres` (`BIGINT`/`DOUBLE PRECISION`/`TEXT`/`BOOLEAN`)
+  is accepted by CockroachDB as-is, and `powder migrate --db postgres://...`
+  works the same way.
+- **No result cache** — server databases can't detect writes from other
+  clients, so the cache is off (correctness first).
+
+## Good to know
+
+CockroachDB is a distributed database and not a perfect PostgreSQL clone — some
+PG features (stored procedures, etc.) are missing or behave differently. The
+DDL and ORM queries Powder generates stay inside the compatible subset, but if
+you reach for PG-specific features in raw SQL, check the
+[CockroachDB compatibility docs](https://www.cockroachlabs.com/docs/stable/postgresql-compatibility).

@@ -1,0 +1,55 @@
+---
+title: SQL Server
+description: mssql:// — T-SQL 自動正規化、TOP/OFFSET FETCH レンダリング
+---
+
+Microsoft SQL Server は専用の `mssql` バックエンドで接続します。ランタイム
+クエリ・DDL・マイグレーションに対応し、方言差はエンジンが吸収するので
+SQLite 向けに書いたコードがそのまま動きます。
+
+## 接続
+
+```
+mssql://user:pass@host:1433/dbname          SQL 認証
+mssql://host/dbname                          Windows 統合認証（Windows 限定）
+mssql://user:pass@host/dbname?encrypt=true   TLS 暗号化（オプトイン）
+```
+
+- `sqlserver://` も同義のエイリアスです。デフォルトポート 1433。
+- **ユーザーを省略すると Windows 統合認証**になります — tiberius が Windows
+  でのみ提供するため、macOS/Linux では明確なエラーで拒否されます
+  （user:pass を指定してください）。
+- 旧世代サーバー（2008 など）は TLS 証明書なしで配備されがちなので、暗号化は
+  `?encrypt=true` を付けたときだけ有効になります。
+
+## 方言差はエンジンが処理
+
+| SQLite/標準構文 | SQL Server レンダリング |
+|---|---|
+| `limit n` | `TOP (n)` |
+| `offset` | `OFFSET … FETCH`（2012+、`orderBy` 必須） |
+| `BEGIN IMMEDIATE` / `SAVEPOINT` / `RELEASE` | T-SQL トランザクション文へ自動正規化 |
+
+ORM コードは無修正 — `db.users.orderBy("id").paginate(2, 20)` のような呼び出しは
+自動的に `OFFSET … FETCH` として出力されます。
+
+## 型マッピング
+
+| schema | SQL Server |
+|---|---|
+| int | BIGINT |
+| float | FLOAT |
+| text | NVARCHAR(400) — 比較・インデックス可能な Unicode |
+| bool | BIT |
+
+## マイグレーション
+
+```bash
+powder ddl --dialect mssql               # CREATE TABLE を出力
+powder migrate --db mssql://...          # INFORMATION_SCHEMA イントロスペクション → 必要な DDL のみ適用
+```
+
+## 結果キャッシュなし
+
+サーバー DB は他クライアントの書き込みを検知できないためキャッシュは
+無効です（SQLite 専用の最適化です）。
