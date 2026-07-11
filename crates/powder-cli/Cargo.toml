@@ -15,7 +15,7 @@ path = "src/main.rs"
 # The dashboard + AI plugin live in their own crate (crates/powder-studio)
 # so a deployment can ship without them: build the lean binary with
 # `cargo build -p powder-cli --release --no-default-features`.
-default = ["studio"]
+default = []
 studio = ["dep:powder-studio"]
 
 [dependencies]
@@ -33,4 +33,4 @@ powder-core = { workspace = true, features = ["postgres", "mysql", "mssql", "lib
 # Blocking shim over the async engine client (powder_core::inspect::Engine).
 tokio = { workspace = true }
 # Dashboard (`powder studio`) + AI query generation (`powder ai`) — optional.
-powder-studio = { path = "../powder-studio", optional = true }
+powder-studio = { path = "../powder-studio", version = "0.1.0", optional = true }

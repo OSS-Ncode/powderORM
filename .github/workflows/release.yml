@@ -244,8 +244,14 @@ jobs:
         if: vars.FIRST_PUBLISH != 'true'
         uses: rust-lang/crates-io-auth-action@v1
         id: auth
+      # Dependency order: cli depends on core (+ optional studio), studio on core.
+      # `cargo publish` blocks until the index sees each crate.
       - name: Publish powder-core
         run: cargo publish -p powder-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ vars.FIRST_PUBLISH == 'true' && secrets.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
+      - name: Publish powder-studio
+        run: cargo publish -p powder-studio
         env:
           CARGO_REGISTRY_TOKEN: ${{ vars.FIRST_PUBLISH == 'true' && secrets.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
       - name: Publish powder-cli
